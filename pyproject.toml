@@ -34,6 +34,9 @@ addopts = "--cov=app --cov-report=term-missing --cov-fail-under=95"
 [tool.coverage.run]
 source = ["app"]
 omit = ["app/main.py"]
+# SQLAlchemy async 内部使用 greenlet 切换，会中断线程级 trace，
+# 导致经 await 进入的后续代码不计入覆盖率；开启 greenlet 并发支持
+concurrency = ["greenlet"]
 
 [tool.coverage.report]
 exclude_lines = [

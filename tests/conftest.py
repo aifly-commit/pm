@@ -7,9 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.db import Base
+from app.core.security import hash_password
+from app.db import Base, get_session
 from app.enums import STAGE_SEQ, StageStatus
 from app.models import Requirement, RequirementStage, User
+
+DEFAULT_PASSWORD = "pass-123456"
 
 
 @pytest_asyncio.fixture
@@ -27,12 +30,56 @@ async def db():
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
-async def pm_user(db) -> User:
-    user = User(username="pm1", password_hash="x", display_name="PM一号", role="pm")
+async def seed_user(db, username: str, role: str, password: str = DEFAULT_PASSWORD) -> User:
+    """直接入库创建用户（不走路由，供夹具/断言用）。"""
+    user = User(
+        username=username,
+        password_hash=hash_password(password),
+        display_name=f"{username}-显示名",
+        role=role,
+    )
     db.add(user)
     await db.flush()
     return user
+
+
+async def login_token(client, username: str, password: str = DEFAULT_PASSWORD) -> str:
+    resp = await client.post(
+        "/api/v1/auth/login", json={"username": username, "password": password}
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["access_token"]
+
+
+def auth_header(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def admin_user(db) -> User:
+    return await seed_user(db, "admin1", "admin")
+
+
+@pytest_asyncio.fixture
+async def pm_user(db) -> User:
+    return await seed_user(db, "pm1", "pm")
+
+
+@pytest_asyncio.fixture
+async def app_client(db):
+    """绑定测试库的 httpx 客户端（覆盖 get_session 依赖）。"""
+    import httpx
+
+    from app.main import app
+
+    async def override_session():
+        yield db
+
+    app.dependency_overrides[get_session] = override_session
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
