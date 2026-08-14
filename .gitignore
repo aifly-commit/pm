@@ -13,3 +13,8 @@ venv/
 # SQLite 数据文件
 *.db
 *.sqlite3
+
+# 测试产物
+.coverage
+htmlcov/
+.pytest_cache/
