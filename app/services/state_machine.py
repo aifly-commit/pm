@@ -104,6 +104,12 @@ def can_complete_stage(stage: RequirementStage) -> None:
 
 # ---------------------------------------------------------------- 回退
 
+def _furthest_started_stage(stages: list[RequirementStage]) -> RequirementStage | None:
+    """返回推进最远的已实际开始环节（seq 最大者）；均未开始返回 None。"""
+    started = [s for s in stages if s.actual_start is not None]
+    return max(started, key=lambda s: s.seq, default=None)
+
+
 def can_revert(from_stage: RequirementStage, to_stage: RequirementStage) -> None:
     """校验回退路径合法，失败抛 FlowError（design.md 3.1 回退规则）。"""
     allowed = ALLOWED_REVERT_TARGETS.get(from_stage.type_enum)
@@ -127,10 +133,26 @@ def apply_revert(
 
     - 目标环节：置为进行中，actual_end 清空，actual_start 保留；
     - 目标之后（seq 更大）的所有环节：重置为未开始，actual_start/actual_end 清空；
-    - 已完成需求不可回退；上线环节不可被回退。
+    - 已完成需求不可回退；上线环节不可被回退；
+    - 只能从"当前所处环节"（推进最远、有实际开始记录的环节）发起回退，
+      防止对历史环节回退时误清下游环节的实际时间。
     """
     if requirement.status == "done":
         raise FlowError("已完成的需求为终态，不可回退")
+
+    current = _furthest_started_stage(stages)
+    if current is None:
+        raise FlowError("尚无已开始的环节，不可回退")
+    if current.seq != from_stage.seq:
+        raise FlowError(
+            f"只能从当前所处环节 {current.stage_type} 发起回退，"
+            f"不能从 {from_stage.stage_type} 发起"
+        )
+    if from_stage.status not in (StageStatus.IN_PROGRESS.value, StageStatus.DONE.value):
+        raise FlowError(
+            f"环节 {from_stage.stage_type} 当前状态为 {from_stage.status}，不可发起回退"
+        )
+
     can_revert(from_stage, to_stage)
 
     to_stage.status = StageStatus.IN_PROGRESS.value

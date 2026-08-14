@@ -244,13 +244,16 @@ class TestRevert:
         assert testing.status == StageStatus.NOT_STARTED.value
 
     async def test_invalid_target_rejected(self, requirement, stages):
-        research = get_stage(stages, StageType.RESEARCH)
+        start_and_complete(get_stage(stages, StageType.RESEARCH))
+        start_and_complete(get_stage(stages, StageType.REVIEW))
         review = get_stage(stages, StageType.REVIEW)
         with pytest.raises(FlowError, match="不允许从 review 回退到 backend_dev"):
             apply_revert(requirement, stages, review, get_stage(stages, StageType.BACKEND_DEV), NOW)
 
     async def test_stage_cannot_initiate_revert(self, requirement, stages):
         research = get_stage(stages, StageType.RESEARCH)
+        research.status = StageStatus.IN_PROGRESS.value
+        research.actual_start = NOW
         with pytest.raises(FlowError, match="不允许发起回退"):
             apply_revert(requirement, stages, research, research, NOW)
 
@@ -262,10 +265,43 @@ class TestRevert:
             apply_revert(requirement, stages, review, research, NOW)
 
     async def test_release_cannot_initiate_revert(self, requirement, stages):
+        for st in (
+            StageType.RESEARCH, StageType.REVIEW, StageType.BACKEND_DEV,
+            StageType.FRONTEND_DEV, StageType.API_DEV, StageType.TESTING,
+        ):
+            start_and_complete(get_stage(stages, st))
         release = get_stage(stages, StageType.RELEASE)
+        release.status = StageStatus.IN_PROGRESS.value
+        release.actual_start = NOW
         testing = get_stage(stages, StageType.TESTING)
         with pytest.raises(FlowError, match="不允许发起回退"):
             apply_revert(requirement, stages, release, testing, NOW)
+
+    async def test_revert_from_non_current_stage_rejected(self, requirement, stages):
+        # 需求已推进到 backend_dev，不允许再对历史环节 review 发起回退
+        make_in_progress(stages)
+        review = get_stage(stages, StageType.REVIEW)
+        research = get_stage(stages, StageType.RESEARCH)
+        with pytest.raises(FlowError, match="只能从当前所处环节 backend_dev 发起回退"):
+            apply_revert(requirement, stages, review, research, NOW)
+        # 历史环节回退被拦截，下游环节的实际时间不受影响
+        backend = get_stage(stages, StageType.BACKEND_DEV)
+        assert backend.status == StageStatus.IN_PROGRESS.value
+        assert backend.actual_start is not None
+
+    async def test_revert_with_no_started_stage_rejected(self, requirement, stages):
+        review = get_stage(stages, StageType.REVIEW)
+        research = get_stage(stages, StageType.RESEARCH)
+        with pytest.raises(FlowError, match="尚无已开始的环节"):
+            apply_revert(requirement, stages, review, research, NOW)
+
+    async def test_revert_from_abnormal_status_rejected(self, requirement, stages):
+        # 防御分支：环节有实际开始记录但状态异常（非进行中/已完成）
+        review = get_stage(stages, StageType.REVIEW)
+        review.actual_start = NOW  # status 仍 not_started
+        research = get_stage(stages, StageType.RESEARCH)
+        with pytest.raises(FlowError, match="不可发起回退"):
+            apply_revert(requirement, stages, review, research, NOW)
 
 
 # ------------------------------------------------------------- 暂停 / 恢复

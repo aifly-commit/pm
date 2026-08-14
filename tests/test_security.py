@@ -72,3 +72,18 @@ class TestAccessToken:
 
     def test_token_expiry_invalid(self):
         assert token_expiry("garbage") is None
+
+
+class TestSecretKeyGuard:
+    def test_default_secret_key_refused(self, monkeypatch):
+        from app.core.config import DEFAULT_SECRET_KEY, ensure_secret_key_safe
+
+        monkeypatch.setattr(settings, "secret_key", DEFAULT_SECRET_KEY)
+        with pytest.raises(RuntimeError, match="不安全的默认值"):
+            ensure_secret_key_safe()
+
+    def test_custom_secret_key_allowed(self, monkeypatch):
+        from app.core.config import ensure_secret_key_safe
+
+        monkeypatch.setattr(settings, "secret_key", "a-long-random-secret")
+        ensure_secret_key_safe()  # 不抛错
