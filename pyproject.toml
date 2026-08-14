@@ -1,0 +1,43 @@
+[project]
+name = "pm"
+version = "0.1.0"
+description = "需求管理与项目管理平台"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "aiosqlite",
+    "alembic",
+    "pydantic",
+    "pydantic-settings",
+    "apscheduler",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    # passlib 1.7.4 与 bcrypt>=4.1 不兼容（hashpw 72 字节报错），固定 4.0.x
+    "bcrypt<4.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=95"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
