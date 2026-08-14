@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Claude Code 本地配置（含个人权限设置，不入库）
+.claude/settings.local.json
+
+# Python（后续开发用）
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# SQLite 数据文件
+*.db
+*.sqlite3
