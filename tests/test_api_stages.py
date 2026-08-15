@@ -341,6 +341,48 @@ class TestPlanUpdate:
         assert logs[0]["reason"] == "提前收口"
         assert logs[0]["auto_generated"] is False
 
+    async def test_first_plan_on_unscheduled_stage_no_500(self, app_client, pm_user):
+        """回归：未排期环节首次设置预估时间，old_value 为 NULL 不得触发 500。"""
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(stages=[]),  # 不带任何排期
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 201, resp.text
+        rid = resp.json()["id"]
+        detail = (
+            await app_client.get(
+                f"/api/v1/requirements/{rid}", headers=auth_header(token)
+            )
+        ).json()
+        research = stage_of(detail, "research")
+        assert research["planned_start"] is None and research["planned_end"] is None
+
+        resp = await app_client.patch(
+            f"/api/v1/stages/{research['id']}/plan",
+            json={
+                "planned_start": "2030-02-02T09:00:00+08:00",
+                "planned_end": "2030-02-04T18:00:00+08:00",
+                "reason": "首次排期",
+            },
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+
+        logs = (
+            await app_client.get(
+                f"/api/v1/stages/{research['id']}/change-logs",
+                headers=auth_header(token),
+            )
+        ).json()
+        assert len(logs) == 2
+        by_field = {l["field"]: l for l in logs}
+        assert by_field["planned_start"]["old_value"] is None
+        assert by_field["planned_start"]["new_value"] == "2030-02-02T09:00:00+08:00"
+        assert by_field["planned_end"]["old_value"] is None
+        assert by_field["planned_end"]["new_value"] == "2030-02-04T18:00:00+08:00"
+
     async def test_update_plan_conflict_409(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
         detail = await make_requirement(app_client, token)

@@ -159,8 +159,8 @@ class ChangeLogOut(BaseModel):
     id: int
     stage_id: int
     field: str
-    old_value: TZDateTime
-    new_value: TZDateTime
+    old_value: TZDateTime | None  # 首次排期时原值为 None
+    new_value: TZDateTime | None
     reason: str
     auto_generated: bool
     changed_by: int

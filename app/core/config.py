@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # 数据库：默认项目根目录下 pm.db
     database_url: str = "sqlite+aiosqlite:///./pm.db"
 
+    # 提醒配置（design.md 4.1）
+    reminder_due_soon_days: int = 1  # 距预计结束 ≤ N 天视为临期
+    reminder_start_soon_enabled: bool = False  # 临开始提醒（可选，默认关闭）
+
 
 settings = Settings()
 

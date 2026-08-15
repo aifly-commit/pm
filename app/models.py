@@ -132,8 +132,9 @@ class StageTimeChangeLog(Base):
     )
     changed_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     field: Mapped[str] = mapped_column(String(16), nullable=False)
-    old_value: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    new_value: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # 首次排期时原值为 NULL；清空时间为 NULL（当前 API 不支持清空，预留）
+    old_value: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    new_value: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     # TRUE = 系统自动产生（如暂停顺延），统计时排除（design.md 6.3）
     auto_generated: Mapped[bool] = mapped_column(Boolean, default=False)

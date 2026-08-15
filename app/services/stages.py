@@ -22,7 +22,8 @@ from app.models import (
     User,
 )
 from app.services import state_machine
-from app.services.requirements import RequirementError, get_stages, now_sh
+from app.services.notifications import notify_status_changed
+from app.services.requirements import STAGE_LABEL, RequirementError, get_stages, now_sh
 from app.services.state_machine import FlowError
 from app.services.time_rules import validate_stage_times
 
@@ -98,6 +99,7 @@ async def complete_stage(
         stage.actual_end = now_sh()
         if stage.stage_type == StageType.RELEASE.value:
             requirement.status = "done"  # 终态（design.md 3.3）
+            await notify_status_changed(session, requirement, stages, "已完成（上线）")
         else:
             state_machine.recalc_status(requirement, stages, now_sh())
     except FlowError as e:
@@ -134,6 +136,9 @@ async def revert_stage(
             reverted_by=user.id,
             reason=reason,
         )
+    )
+    await notify_status_changed(
+        session, requirement, stages, f"被回退（{STAGE_LABEL.get(to_stage.stage_type, to_stage.stage_type)}）"
     )
     await _load_and_touch(session, requirement)
     return requirement, reset
@@ -223,6 +228,8 @@ async def pause_requirement(
         state_machine.pause(requirement, now_sh())
     except FlowError as e:
         raise RequirementError(e.message)
+    stages = await get_stages(session, requirement.id)
+    await notify_status_changed(session, requirement, stages, "被暂停")
     await _load_and_touch(session, requirement)
     return requirement
 
@@ -262,6 +269,7 @@ async def resume_requirement(
                 )
             )
     state_machine.recalc_status(requirement, stages, now_sh())
+    await notify_status_changed(session, requirement, stages, "被恢复（预估时间已顺延）")
     await _load_and_touch(session, requirement)
     return requirement
 
@@ -274,6 +282,7 @@ async def mark_delayed(
         state_machine.mark_delayed(requirement, reason, now_sh(), stages)
     except FlowError as e:
         raise RequirementError(e.message)
+    await notify_status_changed(session, requirement, stages, "被人工标记延期")
     await _load_and_touch(session, requirement)
     return requirement
 
@@ -286,6 +295,7 @@ async def unmark_delayed(
         state_machine.unmark_delayed(requirement, reason, now_sh(), stages)
     except FlowError as e:
         raise RequirementError(e.message)
+    await notify_status_changed(session, requirement, stages, "解除人工延期标记")
     await _load_and_touch(session, requirement)
     return requirement
 

@@ -15,15 +15,24 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import auth, requirements, stages, users
+from app.api import auth, notifications, requirements, stages, users
 from app.core.config import ensure_secret_key_safe
+from app.scheduler import create_scheduler
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # 启动时校验 JWT 密钥，默认值（不安全）拒绝启动
     ensure_secret_key_safe()
-    yield
+    # 定时扫描（design.md 4.2：随后端进程运行，必须单 worker）
+    from app.db import SessionLocal
+
+    scheduler = create_scheduler(SessionLocal)
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="pm — 需求管理与项目管理平台", version="0.1.0", lifespan=lifespan)
@@ -33,6 +42,7 @@ app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(users.router, prefix=API_PREFIX)
 app.include_router(requirements.router, prefix=API_PREFIX)
 app.include_router(stages.router, prefix=API_PREFIX)
+app.include_router(notifications.router, prefix=API_PREFIX)
 
 
 @app.get(f"{API_PREFIX}/health")

@@ -195,7 +195,7 @@
 
 - **暂停中的需求不产生任何时间触发型通知**（临期/逾期），状态变更通知正常产生。
 - **改期后重置提醒标记**：`PATCH /stages/{id}/plan` 修改 `planned_end` 成功后，将该环节 `reminder_sent` 重置为 FALSE，使新的截止时间临近时能再次触发临期提醒；同时该环节当日已发的逾期通知不撤销，新 `planned_end` 再次超期后按新自然日继续去重发送。
-- **通知去重只适用于时间触发型**（`stage_due_soon` / `stage_overdue` / `stage_start_soon`），使用 `dedupe_key = {stage_id}:{type}:{yyyy-mm-dd}`；`status_changed` 类型**不参与去重**（`dedupe_key` 置 NULL），同一状态变更同日多次发生均生成通知。
+- **通知去重只适用于时间触发型**（`stage_due_soon` / `stage_overdue` / `stage_start_soon`），使用 `dedupe_key = {stage_id}:{type}:{yyyy-mm-dd}:{user_id}`（按接收人区分，保证每人每天每环节每类型最多一条）；`status_changed` 类型**不参与去重**（`dedupe_key` 置 NULL），同一状态变更同日多次发生均生成通知。
 - **接收人过滤**：`is_active = FALSE` 的用户与环节负责人为空的环节跳过对应接收人，只发给剩余有效接收人；PM 为必发接收人（若 PM 被停用则该通知不生成，由 Admin 转交流程处理）。
 
 ### 4.2 实现方案
@@ -361,7 +361,7 @@ users 1 ──── n notifications
 | stage_id | INTEGER FK → requirement_stages.id NOT NULL | |
 | changed_by | INTEGER FK → users.id NOT NULL | 操作人 |
 | field | VARCHAR(16) NOT NULL | `planned_start` / `planned_end` |
-| old_value / new_value | DATETIME NOT NULL | |
+| old_value / new_value | DATETIME NULL | 原值/新值；首次排期时原值为 NULL |
 | reason | TEXT NOT NULL | 延期原因（强制非空） |
 | auto_generated | BOOLEAN DEFAULT FALSE | TRUE = 系统自动产生（如暂停顺延），统计时排除 |
 | created_at | DATETIME | |
@@ -393,7 +393,7 @@ users 1 ──── n notifications
 | content | TEXT | |
 | requirement_id | INTEGER FK → requirements.id NULL | |
 | stage_id | INTEGER FK → requirement_stages.id NULL | |
-| dedupe_key | VARCHAR(128) UNIQUE NULL | 防重复：`{stage_id}:{type}:{yyyy-mm-dd}`；仅时间触发型使用，`status_changed` 置 NULL 不去重 |
+| dedupe_key | VARCHAR(128) UNIQUE NULL | 防重复：`{stage_id}:{type}:{yyyy-mm-dd}:{user_id}`（含接收人——同一提醒发给多人时各自成行，键须按人区分才能保持唯一）；仅时间触发型使用，`status_changed` 置 NULL 不去重 |
 | is_read | BOOLEAN DEFAULT FALSE | |
 | created_at | DATETIME | |
 
