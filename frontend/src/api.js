@@ -31,7 +31,9 @@ async function request(method, path, body) {
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (res.status === 401) {
+  // 401 仅对"已登录会话"的请求视为过期；登录接口本身返回 401
+  // 是账密错误，走通用错误分支展示后端真实原因
+  if (res.status === 401 && path !== '/auth/login') {
     clearToken()
     if (location.pathname !== '/login') location.href = '/login'
     throw new Error('登录已过期，请重新登录')

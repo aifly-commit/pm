@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.enums import UserRole
+from app.enums import PRODUCT_LINES, UserRole
 
 
 # ---------------------------------------------------------------- 认证
@@ -97,6 +97,21 @@ TZDateTime = Annotated[
 PRIORITY_PATTERN = r"^P[0-3]$"
 
 
+def _validate_product_line(v: str | None) -> str | None:
+    """产品线枚举校验（enums.PRODUCT_LINES），None 与空串放行。"""
+    if v is None or v == "":
+        return None
+    if v not in PRODUCT_LINES:
+        raise ValueError(f"未知产品线：{v}，可选：{'、'.join(PRODUCT_LINES)}")
+    return v
+
+
+class ProductLineMixin(BaseModel):
+    product_line: str | None = Field(default=None, max_length=32)
+
+    _check_pl = field_validator("product_line")(_validate_product_line)
+
+
 class StagePlanItem(BaseModel):
     """创建/编辑需求时的环节排期项。"""
 
@@ -113,7 +128,7 @@ class StageAssigneeItem(BaseModel):
     assignee_id: int | None
 
 
-class RequirementCreate(BaseModel):
+class RequirementCreate(ProductLineMixin):
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
     priority: str = Field(default="P2", pattern=PRIORITY_PATTERN)
@@ -122,7 +137,7 @@ class RequirementCreate(BaseModel):
     stages: list[StagePlanItem] = Field(default_factory=list)
 
 
-class RequirementUpdate(BaseModel):
+class RequirementUpdate(ProductLineMixin):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     priority: str | None = Field(default=None, pattern=PRIORITY_PATTERN)
@@ -185,11 +200,13 @@ class RequirementOut(BaseModel):
     id: int
     title: str
     description: str | None
+    product_line: str | None
     priority: str
     status: str
     manual_delayed: bool
     manual_delay_reason: str | None
     responsible_pm_id: int
+    pm_name: str | None = None  # 负责 PM 显示名（API 层填充）
     project_id: int | None
     current_stage: str | None = None  # 派生展示字段（含并行窗口标注）
     created_at: TZDateTime

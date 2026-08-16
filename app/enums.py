@@ -43,6 +43,27 @@ class StageType(str, enum.Enum):
     RELEASE = "release"
 
 
+# 产品线枚举（需求归属，design.md 3.5 扩展字段）
+PRODUCT_LINES: tuple[str, ...] = (
+    "MySQL",
+    "PostgreSQL",
+    "SQLServer",
+    "TiDB",
+    "分布式数据库",
+    "Redis",
+    "MongoDB",
+    "Memcached",
+    "Milvus",
+    "记忆服务",
+    "图服务",
+    "ClickHouse",
+    "RabbitMQ",
+    "DMP",
+    "DTS",
+    "DataAgent",
+)
+
+
 # 环节固定顺序（seq 1–7）
 STAGE_SEQ: dict[StageType, int] = {
     StageType.RESEARCH: 1,

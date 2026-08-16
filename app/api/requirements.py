@@ -33,10 +33,17 @@ from app.services.stages import (
 router = APIRouter(tags=["requirements"])
 
 
-def _to_out(req, stages) -> RequirementOut:
+def _to_out(req, stages, names: dict[int, str] | None = None) -> RequirementOut:
     out = RequirementOut.model_validate(req)
     out.current_stage = current_stage_label(stages)
+    if names:
+        out.pm_name = names.get(req.responsible_pm_id)
     return out
+
+
+async def _names_for(session: AsyncSession, reqs: list) -> dict[int, str]:
+    """返回需求负责 PM 的 id → 显示名映射。"""
+    return await req_service.pm_name_map(session, {r.responsible_pm_id for r in reqs})
 
 
 def _error(e: RequirementError) -> HTTPException:
@@ -47,6 +54,7 @@ def _error(e: RequirementError) -> HTTPException:
 async def list_requirements(
     status: str | None = None,
     stage_type: str | None = None,
+    product_line: str | None = None,
     pm_id: int | None = None,
     project_id: int | None = None,
     keyword: str | None = None,
@@ -59,14 +67,16 @@ async def list_requirements(
         session,
         status=status,
         stage_type=stage_type,
+        product_line=product_line,
         pm_id=pm_id,
         project_id=project_id,
         keyword=keyword,
         page=page,
         page_size=page_size,
     )
+    names = await _names_for(session, [r for r, _ in pairs])
     return RequirementListOut(
-        items=[_to_out(r, s) for r, s in pairs],
+        items=[_to_out(r, s, names) for r, s in pairs],
         total=total,
         page=page,
         page_size=page_size,
@@ -89,6 +99,7 @@ async def create_requirement(
             session,
             title=body.title,
             description=body.description,
+            product_line=body.product_line,
             priority=body.priority,
             project_id=body.project_id,
             responsible_pm_id=pm_id,
@@ -98,7 +109,8 @@ async def create_requirement(
         raise _error(e)
     await session.commit()
     stages = await req_service.get_stages(session, req.id)
-    return _to_out(req, stages)
+    names = await _names_for(session, [req])
+    return _to_out(req, stages, names)
 
 
 @router.get("/requirements/{req_id}", response_model=RequirementDetailOut)
@@ -113,7 +125,8 @@ async def get_requirement(
         )
     except RequirementError as e:
         raise _error(e)
-    base = _to_out(req, stages).model_dump()
+    names = await _names_for(session, [req])
+    base = _to_out(req, stages, names).model_dump()
     return RequirementDetailOut(
         **base,
         stages=[StageOut.model_validate(s) for s in stages],
@@ -137,6 +150,7 @@ async def update_requirement(
             req,
             title=body.title,
             description=body.description,
+            product_line=body.product_line,
             priority=body.priority,
             project_id=body.project_id,
             responsible_pm_id=body.responsible_pm_id,

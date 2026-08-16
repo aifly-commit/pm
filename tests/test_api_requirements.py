@@ -495,3 +495,101 @@ class TestLifecycle:
             f"/api/v1/requirements/{detail['id']}/pause", headers=auth_header(t_dev)
         )
         assert resp.status_code == 403
+
+
+class TestProductLineAndOrdering:
+    """产品线字段与列表排序（需求列表体验优化）。"""
+
+    async def test_create_with_product_line(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(title="带产品线", product_line="TiDB"),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["product_line"] == "TiDB"
+
+    async def test_create_invalid_product_line_422(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(product_line="Oracle"),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 422
+
+    async def test_filter_by_product_line(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        for pl in ("MySQL", "Redis"):
+            await app_client.post(
+                "/api/v1/requirements",
+                json=create_body(product_line=pl),
+                headers=auth_header(token),
+            )
+        resp = await app_client.get(
+            "/api/v1/requirements",
+            params={"product_line": "MySQL"},
+            headers=auth_header(token),
+        )
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["items"][0]["product_line"] == "MySQL"
+
+    async def test_patch_product_line(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = (
+            await app_client.post(
+                "/api/v1/requirements", json=create_body(), headers=auth_header(token)
+            )
+        ).json()["id"]
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}",
+            json={"product_line": "Milvus"},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["product_line"] == "Milvus"
+
+    async def test_list_ordered_by_id_asc(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        ids = []
+        for i in range(3):
+            rid = (
+                await app_client.post(
+                    "/api/v1/requirements",
+                    json=create_body(title=f"顺序-{i}"),
+                    headers=auth_header(token),
+                )
+            ).json()["id"]
+            ids.append(rid)
+        # 随便动一下第一个需求（改变 updated_at），列表顺序不应乱
+        await app_client.post(
+            f"/api/v1/requirements/{ids[0]}/mark-delayed",
+            json={"reason": "打乱 updated_at"},
+            headers=auth_header(token),
+        )
+        resp = await app_client.get(
+            "/api/v1/requirements", headers=auth_header(token)
+        )
+        got = [it["id"] for it in resp.json()["items"]]
+        assert got == sorted(got)
+        assert got[:3] == ids
+
+    async def test_list_and_detail_include_pm_name(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = (
+            await app_client.post(
+                "/api/v1/requirements", json=create_body(), headers=auth_header(token)
+            )
+        ).json()["id"]
+        items = (
+            await app_client.get("/api/v1/requirements", headers=auth_header(token))
+        ).json()["items"]
+        assert items[0]["pm_name"] == "pm1-显示名"
+        detail = (
+            await app_client.get(
+                f"/api/v1/requirements/{rid}", headers=auth_header(token)
+            )
+        ).json()
+        assert detail["pm_name"] == "pm1-显示名"

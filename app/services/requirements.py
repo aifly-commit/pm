@@ -126,6 +126,7 @@ async def create_requirement(
     *,
     title: str,
     description: str | None,
+    product_line: str | None,
     priority: str,
     project_id: int | None,
     responsible_pm_id: int,
@@ -147,6 +148,7 @@ async def create_requirement(
     req = Requirement(
         title=title,
         description=description,
+        product_line=product_line,
         priority=priority,
         project_id=project_id,
         responsible_pm_id=responsible_pm_id,
@@ -181,6 +183,7 @@ async def update_requirement(
     *,
     title: str | None = None,
     description: str | None = None,
+    product_line: str | None = None,
     priority: str | None = None,
     project_id: int | None = None,
     responsible_pm_id: int | None = None,
@@ -196,6 +199,8 @@ async def update_requirement(
         req.title = title
     if description is not None:
         req.description = description
+    if product_line is not None:
+        req.product_line = product_line
     if priority is not None:
         req.priority = priority
     if project_id is not None:
@@ -233,6 +238,7 @@ async def list_requirements(
     *,
     status: str | None = None,
     stage_type: str | None = None,
+    product_line: str | None = None,
     pm_id: int | None = None,
     project_id: int | None = None,
     keyword: str | None = None,
@@ -243,10 +249,13 @@ async def list_requirements(
 
     stage_type 为派生条件（当前环节），无法在 SQL 层过滤：
     全量加载后在内存筛选再分页，total 为筛选后的总数（数据量千级，无压力）。
+    排序：按 id 升序，保证列表稳定不乱序。
     """
     stmt = select(Requirement)
     if status is not None:
         stmt = stmt.where(Requirement.status == status)
+    if product_line is not None:
+        stmt = stmt.where(Requirement.product_line == product_line)
     if pm_id is not None:
         stmt = stmt.where(Requirement.responsible_pm_id == pm_id)
     if project_id is not None:
@@ -255,7 +264,7 @@ async def list_requirements(
         stmt = stmt.where(Requirement.title.like(f"%{keyword}%"))
 
     stmt = (
-        stmt.order_by(Requirement.updated_at.desc(), Requirement.id.desc())
+        stmt.order_by(Requirement.id.asc())
         .options(selectinload(Requirement.stages))
     )
     rows = list((await session.scalars(stmt)).all())
@@ -267,3 +276,17 @@ async def list_requirements(
     total = len(pairs)
     start = (page - 1) * page_size
     return pairs[start : start + page_size], total
+
+
+async def pm_name_map(session: AsyncSession, pm_ids: set[int]) -> dict[int, str]:
+    """负责 PM id → 显示名（列表/详情展示用）。"""
+    if not pm_ids:
+        return {}
+    from app.models import User
+
+    rows = (
+        await session.execute(
+            select(User.id, User.display_name).where(User.id.in_(pm_ids))
+        )
+    ).all()
+    return {uid: name for uid, name in rows}

@@ -204,6 +204,50 @@ class TestRequirementWeekly:
         assert body["delay_rate"] == 0.0  # 未完成总数为 0 → 延期率 0
         assert body["top_delay_reasons"] == []
 
+    async def test_first_plan_log_with_null_old_value_no_500(
+        self, app_client, pm_user
+    ):
+        """回归：首次排期（old_value=NULL）的日志不得让调整统计崩溃，且不计入顺延/提前。"""
+        from tests.test_api_requirements import create_body
+
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(stages=[]),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 201, resp.text
+        detail = (
+            await app_client.get(
+                f"/api/v1/requirements/{resp.json()['id']}",
+                headers=auth_header(token),
+            )
+        ).json()
+        sid = detail["stages"][0]["id"]
+        resp = await app_client.patch(
+            f"/api/v1/stages/{sid}/plan",
+            json={
+                "planned_start": "2030-02-02T09:00:00+08:00",
+                "planned_end": "2030-02-04T18:00:00+08:00",
+                "reason": "首次排期",
+            },
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+
+        today = datetime.now().date().isoformat()
+        resp = await app_client.get(
+            "/api/v1/stats/requirements/weekly",
+            params={"date": today},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        # 首次排期不是"调整"：不计入顺延/提前，也不进 Top 延期原因
+        assert body["postponed_count"] == 0
+        assert body["advanced_count"] == 0
+        assert body["top_delay_reasons"] == []
+
     async def test_invalid_month_422(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
         resp = await app_client.get(

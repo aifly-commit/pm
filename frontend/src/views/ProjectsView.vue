@@ -137,32 +137,44 @@ onMounted(reload)
 
 <template>
   <!-- 列表 -->
-  <div v-if="!props.id && !detail">
-    <div class="toolbar">
-      <el-select v-model="filters.status" placeholder="项目状态" clearable style="width: 140px" @change="loadList">
-        <el-option v-for="s in PROJECT_STATUSES" :key="s.value" :label="s.label" :value="s.value" />
-      </el-select>
-      <el-button type="primary" @click="loadList">查询</el-button>
-      <el-button type="success" @click="createVisible = true">新建项目</el-button>
+  <div v-if="!props.id && !detail" class="page">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">项目管理</h2>
+        <p class="page-sub">接口人 · 对接需求清单 · 进展与周/月复盘</p>
+      </div>
+      <el-button type="primary" @click="createVisible = true">+ 新建项目</el-button>
     </div>
-    <el-table :data="rows" v-loading="loading" @row-click="(r) => $router.push(`/projects/${r.id}`)" style="cursor: pointer">
-      <el-table-column prop="id" label="ID" width="70" />
-      <el-table-column prop="name" label="项目名称" min-width="200" />
-      <el-table-column label="状态" width="110">
-        <template #default="{ row }">
-          <el-tag :type="statusMeta(PROJECT_STATUSES, row.status).type">{{ statusMeta(PROJECT_STATUSES, row.status).label }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="人工进度" width="180">
-        <template #default="{ row }">
-          <el-progress :percentage="row.progress_percent" :stroke-width="10" />
-        </template>
-      </el-table-column>
-      <el-table-column label="计划周期" width="220">
-        <template #default="{ row }">{{ fmtDate(row.planned_start) }} ~ {{ fmtDate(row.planned_end) }}</template>
-      </el-table-column>
-      <el-table-column prop="owner_id" label="负责人" width="90" />
-    </el-table>
+
+    <el-card shadow="never" class="filter-card">
+      <div class="toolbar">
+        <el-select v-model="filters.status" placeholder="项目状态" clearable style="width: 140px" @change="loadList">
+          <el-option v-for="s in PROJECT_STATUSES" :key="s.value" :label="s.label" :value="s.value" />
+        </el-select>
+        <el-button type="primary" plain @click="loadList">查询</el-button>
+      </div>
+    </el-card>
+
+    <el-card shadow="never" class="table-card">
+      <el-table :data="rows" v-loading="loading" @row-click="(r) => $router.push(`/projects/${r.id}`)" style="cursor: pointer">
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="name" label="项目名称" min-width="200" />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="statusMeta(PROJECT_STATUSES, row.status).type" round>{{ statusMeta(PROJECT_STATUSES, row.status).label }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="人工进度" width="180">
+          <template #default="{ row }">
+            <el-progress :percentage="row.progress_percent" :stroke-width="10" />
+          </template>
+        </el-table-column>
+        <el-table-column label="计划周期" width="220">
+          <template #default="{ row }">{{ fmtDate(row.planned_start) }} ~ {{ fmtDate(row.planned_end) }}</template>
+        </el-table-column>
+        <el-table-column prop="owner_id" label="负责人" width="90" />
+      </el-table>
+    </el-card>
 
     <el-dialog v-model="createVisible" title="新建项目" width="560px">
       <el-form label-width="90px">
@@ -190,56 +202,66 @@ onMounted(reload)
   </div>
 
   <!-- 详情 -->
-  <div v-else v-loading="loading">
-    <el-page-header @back="() => { detail = null; $router.push('/projects'); loadList() }" style="margin-bottom: 16px">
-      <template #content><b>{{ detail?.name }}</b></template>
-    </el-page-header>
+  <div v-else v-loading="loading" class="page">
+    <template v-if="detail">
+      <el-card shadow="never" class="head-card">
+        <div class="head-row">
+          <div class="head-main">
+            <div class="head-title">
+              <el-button link class="back" @click="() => { detail = null; $router.push('/projects'); loadList() }">← 返回</el-button>
+              <span class="title-text">{{ detail.name }}</span>
+              <el-tag :type="statusMeta(PROJECT_STATUSES, detail.status).type" round>
+                {{ statusMeta(PROJECT_STATUSES, detail.status).label }}
+              </el-tag>
+            </div>
+            <div class="head-meta">
+              <span>负责人 #{{ detail.owner_id }}</span>
+              <span>计划周期 {{ fmtDate(detail.planned_start) }} ~ {{ fmtDate(detail.planned_end) }}</span>
+              <span>自动完成率 {{ (detail.completion_rate * 100).toFixed(1) }}%（{{ detail.done_count }}/{{ detail.total }}）</span>
+            </div>
+            <div class="head-meta">
+              <span>
+                接口人：{{ (detail.contacts || []).map((c) => `${c.name}(${c.phone || c.email || c.im || '—'})`).join('、') || '—' }}
+              </span>
+            </div>
+            <div class="progress-row">
+              <span class="progress-label">人工进度</span>
+              <el-progress :percentage="detail.progress_percent" class="progress-bar" />
+            </div>
+            <div v-if="detail.progress_note" class="head-desc">{{ detail.progress_note }}</div>
+          </div>
+          <div v-if="canWriteProject(detail)" class="head-actions">
+            <el-button size="small" type="primary" @click="openAttach">挂接需求</el-button>
+            <el-button size="small" type="danger" plain @click="removeProject">删除项目</el-button>
+          </div>
+        </div>
+      </el-card>
 
-    <el-descriptions v-if="detail" :column="4" border size="small" style="margin-bottom: 16px">
-      <el-descriptions-item label="状态">
-        <el-tag :type="statusMeta(PROJECT_STATUSES, detail.status).type">{{ statusMeta(PROJECT_STATUSES, detail.status).label }}</el-tag>
-      </el-descriptions-item>
-      <el-descriptions-item label="负责人">{{ detail.owner_id }}</el-descriptions-item>
-      <el-descriptions-item label="计划周期">{{ fmtDate(detail.planned_start) }} ~ {{ fmtDate(detail.planned_end) }}</el-descriptions-item>
-      <el-descriptions-item label="自动完成率">{{ (detail.completion_rate * 100).toFixed(1) }}%（{{ detail.done_count }}/{{ detail.total }}）</el-descriptions-item>
-      <el-descriptions-item label="接口人" :span="2">
-        {{ (detail.contacts || []).map((c) => `${c.name}(${c.phone || c.email || c.im || '—'})`).join('、') || '—' }}
-      </el-descriptions-item>
-      <el-descriptions-item label="进展" :span="2">
-        <el-progress :percentage="detail.progress_percent" />
-        <span style="font-size: 13px; color: #909399">{{ detail.progress_note || '' }}</span>
-      </el-descriptions-item>
-    </el-descriptions>
-
-    <div v-if="detail && canWriteProject(detail)" style="margin-bottom: 12px; display: flex; gap: 8px">
-      <el-button type="primary" @click="openAttach">挂接需求</el-button>
-      <el-button type="danger" plain @click="removeProject">删除项目</el-button>
-    </div>
-
-    <el-card shadow="never">
-      <template #header><b>对接需求清单</b></template>
-      <el-table :data="detail?.requirements || []">
-        <el-table-column label="需求" min-width="220">
-          <template #default="{ row }">
-            <router-link :to="`/requirements/${row.id}`">{{ row.title }}</router-link>
-          </template>
-        </el-table-column>
-        <el-table-column prop="priority" label="优先级" width="90" />
-        <el-table-column prop="current_stage" label="当前环节" width="140">
-          <template #default="{ row }">{{ row.current_stage || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">
-            <el-tag :type="statusMeta(REQ_STATUSES, row.status).type">{{ statusMeta(REQ_STATUSES, row.status).label }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="120">
-          <template #default="{ row }">
-            <el-button v-if="canWriteProject(detail)" size="small" link type="danger" @click="detach(row.id)">解除挂接</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+      <el-card shadow="never">
+        <template #header><span class="card-title">对接需求清单</span></template>
+        <el-table :data="detail?.requirements || []">
+          <el-table-column label="需求" min-width="220">
+            <template #default="{ row }">
+              <router-link :to="`/requirements/${row.id}`">{{ row.title }}</router-link>
+            </template>
+          </el-table-column>
+          <el-table-column prop="priority" label="优先级" width="90" />
+          <el-table-column prop="current_stage" label="当前环节" width="140">
+            <template #default="{ row }">{{ row.current_stage || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <el-tag :type="statusMeta(REQ_STATUSES, row.status).type" round>{{ statusMeta(REQ_STATUSES, row.status).label }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button v-if="canWriteProject(detail)" size="small" link type="danger" @click="detach(row.id)">解除挂接</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </template>
 
     <el-dialog v-model="attachVisible" title="挂接需求" width="480px">
       <el-select v-model="attachId" placeholder="选择未挂接的需求" filterable style="width: 100%">
@@ -254,9 +276,89 @@ onMounted(reload)
 </template>
 
 <style scoped>
-.toolbar {
+.filter-card {
+  margin-bottom: 14px;
+}
+
+.filter-card :deep(.el-card__body) {
+  padding: 14px 20px;
+}
+
+.table-card :deep(.el-card__body) {
+  padding: 8px 12px 16px;
+}
+
+.head-card {
+  margin-bottom: 14px;
+}
+
+.head-row {
   display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.head-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.head-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.back {
+  color: var(--pm-text-sub);
+  padding: 0;
+  margin-right: 2px;
+}
+
+.title-text {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.head-meta {
+  margin-top: 8px;
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--pm-text-sub);
+}
+
+.progress-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  max-width: 420px;
+}
+
+.progress-label {
+  font-size: 13px;
+  color: var(--pm-text-sub);
+  flex-shrink: 0;
+}
+
+.progress-bar {
+  flex: 1;
+}
+
+.head-desc {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #4b5668;
+  line-height: 1.6;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 </style>

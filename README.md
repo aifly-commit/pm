@@ -26,7 +26,14 @@ PM_SECRET_KEY=<随机密钥> uvicorn app.main:app --reload --workers 1
 cd frontend && npm install --registry=https://registry.npmmirror.com && npm run dev
 
 # 前端构建
-cd frontend && npm run build   # 产物在 frontend/dist，可由 Nginx 托管
+cd frontend && npm run build   # 产物在 frontend/dist
+
+# 部署（单机）：构建前端后，FastAPI 会直接托管 frontend/dist（含 SPA 回退），
+# 无需 Nginx；/api/* 始终优先命中 API 路由
+PM_SECRET_KEY=<随机密钥> uvicorn app.main:app --workers 1
+
+# 端到端冒烟测试（独立临时库 + 端口 8123，不影响开发库）
+bash scripts/smoke.sh
 
 # 测试（覆盖率硬性要求 ≥95%，见 pyproject.toml）
 pytest

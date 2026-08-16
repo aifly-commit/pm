@@ -144,8 +144,10 @@ async def _adjustment_stats(
             )
         ).all()
     )
-    postponed = [l for l in logs if l.new_value > l.old_value]
-    advanced = [l for l in logs if l.new_value < l.old_value]
+    # old/new_value 为 NULL 的是首次排期记录（M2 起允许），不属于"调整"，剔除后再比较
+    comparable = [l for l in logs if l.old_value is not None and l.new_value is not None]
+    postponed = [l for l in comparable if l.new_value > l.old_value]
+    advanced = [l for l in comparable if l.new_value < l.old_value]
     reason_count: dict[str, int] = {}
     for l in postponed:
         reason_count[l.reason] = reason_count.get(l.reason, 0) + 1

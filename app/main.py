@@ -12,8 +12,11 @@ from __future__ import annotations
 import asyncio
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import auth, notifications, projects, requirements, stages, stats, users
 from app.core.config import ensure_secret_key_safe
@@ -51,6 +54,27 @@ app.include_router(stats.router, prefix=API_PREFIX)
 @app.get(f"{API_PREFIX}/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------- 前端托管（design.md 10.1）
+# 单机部署：直接由 FastAPI 托管 frontend/dist；history 模式需要 SPA 回退。
+# 静态挂载与兜底路由注册在最后，/api/* 始终优先命中 API 路由。
+FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if FRONTEND_DIST.is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=FRONTEND_DIST / "assets"),
+        name="frontend-assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:
+        """SPA 回退：存在的静态文件直接返回，其余路径回退到 index.html。"""
+        candidate = FRONTEND_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")
 
 
 async def _create_admin(username: str, password: str, display_name: str) -> None:

@@ -31,6 +31,13 @@ export const PROJECT_STATUSES = [
   { value: 'terminated', label: '终止', type: 'danger' },
 ]
 
+// 与后端 app/enums.py PRODUCT_LINES 保持一致
+export const PRODUCT_LINES = [
+  'MySQL', 'PostgreSQL', 'SQLServer', 'TiDB', '分布式数据库',
+  'Redis', 'MongoDB', 'Memcached', 'Milvus', '记忆服务',
+  '图服务', 'ClickHouse', 'RabbitMQ', 'DMP', 'DTS', 'DataAgent',
+]
+
 export function statusMeta(list, value) {
   return list.find((s) => s.value === value) || { label: value, type: 'info' }
 }

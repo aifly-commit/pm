@@ -1,0 +1,131 @@
+/* 全局设计主题：设计令牌 + Element Plus 变量覆盖 + 通用页面类 */
+
+:root {
+  /* 品牌色板 */
+  --pm-primary: #4c6fff;
+  --pm-primary-deep: #3b57d9;
+  --pm-bg: #f2f4f9;
+  --pm-card-border: #e8ecf4;
+  --pm-text-main: #1f2733;
+  --pm-text-sub: #7a8699;
+  --pm-radius: 10px;
+  --pm-shadow: 0 1px 2px rgba(31, 41, 66, 0.04), 0 4px 16px rgba(31, 41, 66, 0.06);
+
+  /* Element Plus 变量覆盖 */
+  --el-color-primary: var(--pm-primary);
+  --el-border-radius-base: 6px;
+  --el-font-family: 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--pm-bg);
+  color: var(--pm-text-main);
+  font-family: var(--el-font-family);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 通用页面结构 ---------- */
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  animation: pm-fade-in 0.25s ease;
+}
+
+@keyframes pm-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+.page-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--pm-text-sub);
+}
+
+/* ---------- 卡片 ---------- */
+.el-card {
+  border: 1px solid var(--pm-card-border);
+  border-radius: var(--pm-radius);
+  box-shadow: var(--pm-shadow);
+}
+
+.el-card__header {
+  border-bottom: 1px solid var(--pm-card-border);
+  padding: 14px 20px;
+  font-size: 14px;
+}
+
+.card-title {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-title::before {
+  content: '';
+  width: 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--pm-primary);
+}
+
+/* ---------- 表格 ---------- */
+.el-table {
+  --el-table-header-bg-color: #f7f9fc;
+  --el-table-header-text-color: #5b6676;
+  --el-table-row-hover-bg-color: #f5f8ff;
+}
+
+.el-table th.el-table__cell {
+  font-weight: 600;
+}
+
+/* ---------- 工具条 ---------- */
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ---------- 链接 ---------- */
+a {
+  color: var(--pm-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--pm-primary-deep);
+}
+
+/* ---------- 描述列表 ---------- */
+.el-descriptions__label {
+  color: var(--pm-text-sub) !important;
+}

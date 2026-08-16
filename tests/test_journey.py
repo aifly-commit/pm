@@ -415,6 +415,7 @@ class TestExtraBranches:
                 db,
                 title="兜底",
                 description=None,
+                product_line=None,
                 priority="P2",
                 project_id=None,
                 responsible_pm_id=pm_user.id,
