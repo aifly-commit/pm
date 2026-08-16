@@ -63,6 +63,9 @@ PRODUCT_LINES: tuple[str, ...] = (
     "DataAgent",
 )
 
+# 需求分类枚举
+REQ_CATEGORIES: tuple[str, ...] = ("基本能力", "重点能力")
+
 
 # 环节固定顺序（seq 1–7）
 STAGE_SEQ: dict[StageType, int] = {

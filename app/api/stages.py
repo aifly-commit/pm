@@ -40,6 +40,10 @@ async def _out_with_stage_label(session, requirement) -> RequirementOut:
     stages = await get_stages(session, requirement.id)
     out = _requirement_out(session, requirement)
     out.current_stage = current_stage_label(stages)
+    release = next((s for s in stages if s.stage_type == "release"), None)
+    if release is not None:
+        out.planned_release = release.planned_end
+        out.actual_release = release.actual_end
     return out
 
 

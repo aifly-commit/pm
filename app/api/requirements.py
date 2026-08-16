@@ -38,6 +38,10 @@ def _to_out(req, stages, names: dict[int, str] | None = None) -> RequirementOut:
     out.current_stage = current_stage_label(stages)
     if names:
         out.pm_name = names.get(req.responsible_pm_id)
+    release = next((s for s in stages if s.stage_type == "release"), None)
+    if release is not None:
+        out.planned_release = release.planned_end
+        out.actual_release = release.actual_end
     return out
 
 
@@ -100,6 +104,8 @@ async def create_requirement(
             title=body.title,
             description=body.description,
             product_line=body.product_line,
+            category=body.category,
+            source=body.source,
             priority=body.priority,
             project_id=body.project_id,
             responsible_pm_id=pm_id,
@@ -151,6 +157,8 @@ async def update_requirement(
             title=body.title,
             description=body.description,
             product_line=body.product_line,
+            category=body.category,
+            source=body.source,
             priority=body.priority,
             project_id=body.project_id,
             responsible_pm_id=body.responsible_pm_id,

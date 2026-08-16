@@ -84,10 +84,7 @@ onMounted(() => {
       <div class="user-area" v-if="user">
         <div class="user-card">
           <div class="avatar">{{ (user.display_name || '?').slice(0, 1) }}</div>
-          <div class="user-info">
-            <div class="user-name">{{ user.display_name }}</div>
-            <div class="user-role">{{ roleLabel }}</div>
-          </div>
+          <span class="user-info user-name">{{ user.display_name }}<span class="user-role">· {{ roleLabel }}</span></span>
         </div>
         <button class="logout-btn" title="退出登录" @click="logout">
           <span class="logout-text">退出登录</span>
@@ -115,7 +112,7 @@ onMounted(() => {
 
 /* ---------- 侧边栏骨架：宽度过渡 + 内部元素只做透明度/位移，避免 layout 抖动 ---------- */
 .sidebar {
-  width: 216px;
+  width: 176px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -132,14 +129,32 @@ onMounted(() => {
   width: 68px;
 }
 
-/* 文字类元素：不换行 + 透明度渐隐，配合宽度动画平滑收起 */
+/* 文字类元素：不换行 + 透明度与最大宽度联动收起，避免占位移位 */
 .brand-text,
 .nav-text,
 .user-info,
 .logout-text {
   white-space: nowrap;
   overflow: hidden;
-  transition: opacity 0.18s ease;
+  transition: opacity 0.18s ease, max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.brand-text {
+  max-width: 120px;
+}
+
+.nav-text {
+  max-width: 120px;
+}
+
+.user-info {
+  max-width: 110px;
+}
+
+.logout-text {
+  max-width: 80px;
+  display: inline-block;
+  vertical-align: middle;
 }
 
 .sidebar.collapsed .brand-text,
@@ -147,14 +162,15 @@ onMounted(() => {
 .sidebar.collapsed .user-info,
 .sidebar.collapsed .logout-text {
   opacity: 0;
+  max-width: 0;
 }
 
 /* ---------- 品牌区 ---------- */
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 20px 14px 16px;
+  gap: 8px;
+  padding: 18px 14px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
@@ -183,21 +199,21 @@ onMounted(() => {
 /* ---------- 导航 ---------- */
 .nav {
   flex: 1;
-  padding: 14px 10px;
+  padding: 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .nav-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 42px;
+  gap: 8px;
+  height: 40px;
   padding: 0 12px;
   border-radius: 10px;
-  font-size: 14px;
+  font-size: 13.5px;
   color: #a8b3cf;
   overflow: hidden;
   transition: background 0.2s ease, color 0.2s ease;
@@ -279,22 +295,22 @@ onMounted(() => {
   margin-left: 0;
 }
 
-/* ---------- 用户区 + 独立退出按钮（上下排列） ---------- */
+/* ---------- 用户区：与导航区左右边距一致（8px），保证收起态圆心同一竖线 ---------- */
 .user-area {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
-  margin: 12px 10px;
+  margin: 12px 8px;
 }
 
 .user-card {
-  flex: 1;
-  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -303,6 +319,11 @@ onMounted(() => {
 
 .sidebar.collapsed .user-card {
   padding: 4px;
+  gap: 0; /* 名字已零宽，gap 会把头像顶偏 */
+  border-radius: 50%;
+  /* 收起态去掉外层椭圆圈，仅保留头像本身 */
+  background: transparent;
+  border-color: transparent;
 }
 
 .avatar {
@@ -316,6 +337,16 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  /* 展开态：不显示姓氏圆标，仅显示用户名；收起态才显示 */
+  opacity: 0;
+  max-width: 0;
+  transition: opacity 0.18s ease, max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.sidebar.collapsed .avatar {
+  opacity: 1;
+  max-width: 32px;
 }
 
 .user-info {
@@ -328,6 +359,10 @@ onMounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
 }
 
 .user-role {
@@ -335,25 +370,29 @@ onMounted(() => {
   color: #66739a;
 }
 
-/* 退出：与用户卡片上下分离的独立按钮 */
+/* 退出：胶囊按钮，文字居中，悬停显红 */
 .logout-btn {
   position: relative;
   flex-shrink: 0;
-  height: 32px;
+  height: 34px;
   min-width: 34px;
   padding: 0 12px;
-  border: 1px solid rgba(245, 108, 108, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 999px;
-  background: rgba(245, 108, 108, 0.08);
-  color: #f2989a;
-  font-size: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #a8b3cf;
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-align: center;
   cursor: pointer;
   overflow: hidden;
-  transition: background 0.2s ease, color 0.2s ease, padding 0.28s ease;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    padding 0.28s ease;
 }
 
 .logout-btn:hover {
-  background: rgba(245, 108, 108, 0.2);
+  background: rgba(245, 108, 108, 0.14);
+  border-color: rgba(245, 108, 108, 0.4);
   color: #ffb3b5;
 }
 
@@ -385,7 +424,7 @@ onMounted(() => {
 
 /* ---------- 收起/展开按钮 ---------- */
 .collapse-btn {
-  margin: 0 10px 14px;
+  margin: 0 8px 14px;
   padding: 7px 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;

@@ -42,7 +42,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/auth/login" -H 'C
 
 echo "== 3. 需求闭环（创建 → 走完 7 环节 → done）=="
 RID=$(curl -sf -X POST "${BASE}/requirements" -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
-  -d '{"title":"冒烟需求","priority":"P1"}' | .venv/bin/python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+  -d '{"title":"冒烟需求","priority":"P1","product_line":"MySQL","category":"基本能力","source":"冒烟","stages":[{"stage_type":"release","planned_end":"2030-02-01T23:59:59+08:00"}]}' | .venv/bin/python -c "import sys,json;print(json.load(sys.stdin)['id'])")
 echo "  创建需求 id=${RID} ✓"
 # 无排期创建后首次排期（回归路径：old_value NULL 不得 500）
 SID=$(curl -sf "${BASE}/requirements/${RID}" -H "Authorization: Bearer ${TOKEN}" \

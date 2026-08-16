@@ -7,7 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.enums import PRODUCT_LINES, UserRole
+from app.enums import PRODUCT_LINES, REQ_CATEGORIES, UserRole
 
 
 # ---------------------------------------------------------------- 认证
@@ -106,10 +106,22 @@ def _validate_product_line(v: str | None) -> str | None:
     return v
 
 
+def _validate_category(v: str | None) -> str | None:
+    """需求分类枚举校验（enums.REQ_CATEGORIES），None 与空串放行。"""
+    if v is None or v == "":
+        return None
+    if v not in REQ_CATEGORIES:
+        raise ValueError(f"未知需求分类：{v}，可选：{'、'.join(REQ_CATEGORIES)}")
+    return v
+
+
 class ProductLineMixin(BaseModel):
     product_line: str | None = Field(default=None, max_length=32)
+    category: str | None = Field(default=None, max_length=16)
+    source: str | None = Field(default=None, max_length=128)
 
     _check_pl = field_validator("product_line")(_validate_product_line)
+    _check_cat = field_validator("category")(_validate_category)
 
 
 class StagePlanItem(BaseModel):
@@ -129,6 +141,9 @@ class StageAssigneeItem(BaseModel):
 
 
 class RequirementCreate(ProductLineMixin):
+    # 创建时产品线必填（更新时仍可空 = 不修改）
+    product_line: str = Field(min_length=1, max_length=32)
+
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
     priority: str = Field(default="P2", pattern=PRIORITY_PATTERN)
@@ -201,6 +216,8 @@ class RequirementOut(BaseModel):
     title: str
     description: str | None
     product_line: str | None
+    category: str | None
+    source: str | None
     priority: str
     status: str
     manual_delayed: bool
@@ -209,6 +226,8 @@ class RequirementOut(BaseModel):
     pm_name: str | None = None  # 负责 PM 显示名（API 层填充）
     project_id: int | None
     current_stage: str | None = None  # 派生展示字段（含并行窗口标注）
+    planned_release: TZDateTime | None = None  # 预计上线时间（release 环节 planned_end）
+    actual_release: TZDateTime | None = None  # 实际上线时间（release 环节 actual_end）
     created_at: TZDateTime
     updated_at: TZDateTime
 

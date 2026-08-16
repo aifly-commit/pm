@@ -44,24 +44,36 @@ class TestValidateStageTimes:
         assert "需求调研" in errors[0]
 
     async def test_start_before_prereq_end(self, stages):
+        # 跨月粒度：review 开始月份早于 research 结束月份 → 冲突
         set_plan(
             stages,
-            research=(d(0), d(2)),
-            review=(d(1), d(4)),  # 早于 research 的 planned_end
+            research=(datetime(2026, 8, 3), datetime(2026, 9, 10)),
+            review=(datetime(2026, 8, 20), datetime(2026, 9, 20)),
         )
         from app.services.time_rules import validate_stage_times
 
         errors = validate_stage_times(stages)
         assert any("需求审评" in e for e in errors)
 
-    async def test_testing_needs_all_three_dev_end(self, stages):
-        # testing 依赖三个开发环节中最晚的 planned_end
+    async def test_same_month_adjacent_passes(self, stages):
+        # 同月相邻视为合理（月份级排期）：review 开始日与 research 结束同月
         set_plan(
             stages,
-            backend_dev=(d(0), d(10)),
-            frontend_dev=(d(10), d(12)),
-            api_dev=(d(10), d(14)),
-            testing=(d(12), d(20)),  # 早于 api_dev 的 d(14)
+            research=(datetime(2026, 8, 3), datetime(2026, 8, 25)),
+            review=(datetime(2026, 8, 10), datetime(2026, 9, 5)),
+        )
+        from app.services.time_rules import validate_stage_times
+
+        assert validate_stage_times(stages) == []
+
+    async def test_testing_needs_all_three_dev_end(self, stages):
+        # testing 依赖三个开发环节中最晚的 planned_end（跨月比较）
+        set_plan(
+            stages,
+            backend_dev=(d(0), datetime(2026, 9, 10)),
+            frontend_dev=(datetime(2026, 9, 10), datetime(2026, 9, 12)),
+            api_dev=(datetime(2026, 9, 10), datetime(2026, 9, 14)),
+            testing=(datetime(2026, 8, 26), datetime(2026, 10, 20)),  # 开始月份早于 api_dev 的 9 月
         )
         from app.services.time_rules import validate_stage_times
 
@@ -96,8 +108,8 @@ class TestValidateStageTimes:
         set_plan(
             stages,
             research=(d(2), d(1)),       # 环节内倒挂
-            backend_dev=(d(0), d(3)),    # 早于 review 的 planned_end → 顺序冲突
-            review=(d(3), d(2)),         # 环节内倒挂
+            backend_dev=(d(0), d(30)),   # 8 月开始，早于 review 结束月份（9 月）→ 顺序冲突
+            review=(d(20), d(19)),       # 环节内倒挂（9/3 ~ 9/2）
         )
         from app.services.time_rules import validate_stage_times
 

@@ -127,12 +127,17 @@ async def create_requirement(
     title: str,
     description: str | None,
     product_line: str | None,
+    category: str | None,
+    source: str | None,
     priority: str,
     project_id: int | None,
     responsible_pm_id: int,
     stage_plans: list[dict],
 ) -> Requirement:
-    """创建需求并生成 7 个环节（design.md 3.1）。预估时间可整体留空。"""
+    """创建需求并生成 7 个环节（design.md 3.1）。
+
+    预计上线时间（release 环节 planned_end）为必填项；其余环节排期可留空。
+    """
     if project_id is not None:
         from app.models import Project
 
@@ -144,11 +149,15 @@ async def create_requirement(
     unknown = set(plan_by_type) - {t.value for t in STAGE_SEQ}
     if unknown:
         raise RequirementError(f"未知环节类型：{sorted(unknown)}")
+    if plan_by_type.get(StageType.RELEASE.value, {}).get("planned_end") is None:
+        raise RequirementError("预计上线时间（上线环节的预计结束时间）为必填项")
 
     req = Requirement(
         title=title,
         description=description,
         product_line=product_line,
+        category=category,
+        source=source,
         priority=priority,
         project_id=project_id,
         responsible_pm_id=responsible_pm_id,
@@ -184,6 +193,8 @@ async def update_requirement(
     title: str | None = None,
     description: str | None = None,
     product_line: str | None = None,
+    category: str | None = None,
+    source: str | None = None,
     priority: str | None = None,
     project_id: int | None = None,
     responsible_pm_id: int | None = None,
@@ -201,6 +212,10 @@ async def update_requirement(
         req.description = description
     if product_line is not None:
         req.product_line = product_line
+    if category is not None:
+        req.category = category
+    if source is not None:
+        req.source = source
     if priority is not None:
         req.priority = priority
     if project_id is not None:

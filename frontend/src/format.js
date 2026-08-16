@@ -38,6 +38,9 @@ export const PRODUCT_LINES = [
   '图服务', 'ClickHouse', 'RabbitMQ', 'DMP', 'DTS', 'DataAgent',
 ]
 
+// 与后端 app/enums.py REQ_CATEGORIES 保持一致
+export const REQ_CATEGORIES = ['基本能力', '重点能力']
+
 export function statusMeta(list, value) {
   return list.find((s) => s.value === value) || { label: value, type: 'info' }
 }
@@ -55,4 +58,11 @@ export function fmtTime(value) {
 export function fmtDate(value) {
   if (!value) return '—'
   return String(value).slice(0, 10)
+}
+
+// 月份展示：yyyy.mm（预计上线时间等）
+export function fmtMonth(value) {
+  if (!value) return '—'
+  const s = String(value)
+  return `${s.slice(0, 4)}.${s.slice(5, 7)}`
 }

@@ -21,7 +21,7 @@ PLANS = [
 
 
 def create_body(**overrides) -> dict:
-    body = {"title": "新需求", "priority": "P1", "stages": PLANS}
+    body = {"title": "新需求", "priority": "P1", "product_line": "MySQL", "stages": PLANS}
     body.update(overrides)
     return body
 
@@ -45,20 +45,87 @@ class TestCreateRequirement:
         assert [s["seq"] for s in detail["stages"]] == [1, 2, 3, 4, 5, 6, 7]
         assert detail["stages"][0]["planned_start"] == "2030-01-01T09:00:00+08:00"
 
-    async def test_create_without_plans_ok(self, app_client, pm_user):
+    async def test_create_requires_product_line_422(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
         resp = await app_client.post(
             "/api/v1/requirements",
-            json={"title": "空排期需求"},
+            json={"title": "缺产品线", "stages": PLANS},
             headers=auth_header(token),
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 422
+
+    async def test_create_requires_release_time_409(self, app_client, pm_user):
+        """预计上线时间（release 环节 planned_end）为必填项。"""
+        token = await login_token(app_client, "pm1")
+        # 完全不带排期
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(title="空排期需求", stages=[]),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 409
+        assert "预计上线时间" in resp.json()["detail"]
+        # 只带 release 的预计开始、没有预计结束 → 同样拒绝
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(
+                stages=[{"stage_type": "release", "planned_start": "2030-01-20T00:00:00+08:00"}]
+            ),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 409
+
+    async def test_create_only_release_time_ok(self, app_client, pm_user):
+        """只填预计上线时间即可创建，其余环节排期留空。"""
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(
+                title="仅上线时间",
+                stages=[{"stage_type": "release", "planned_end": "2030-02-10T23:59:59+08:00"}],
+            ),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["planned_release"] == "2030-02-10T23:59:59+08:00"
         detail = (
             await app_client.get(
                 f"/api/v1/requirements/{resp.json()['id']}", headers=auth_header(token)
             )
         ).json()
-        assert all(s["planned_start"] is None for s in detail["stages"])
+        research = next(s for s in detail["stages"] if s["stage_type"] == "research")
+        assert research["planned_start"] is None
+
+    async def test_create_with_category_and_source(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(category="重点能力", source="客户反馈"),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["category"] == "重点能力"
+        assert resp.json()["source"] == "客户反馈"
+
+    async def test_create_invalid_category_422(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(category="创新探索"),
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 422
+
+    async def test_list_includes_release_times(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.post(
+            "/api/v1/requirements", json=create_body(), headers=auth_header(token)
+        )
+        assert resp.status_code == 201, resp.text
+        resp = await app_client.get("/api/v1/requirements", headers=auth_header(token))
+        item = resp.json()["items"][0]
+        assert item["planned_release"] == "2030-01-20T20:00:00+08:00"
+        assert item["actual_release"] is None
 
     async def test_create_with_invalid_times_409(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
@@ -75,8 +142,8 @@ class TestCreateRequirement:
     async def test_create_with_prereq_conflict_409(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
         bad = [dict(p) for p in PLANS]
-        # review 开始早于 research 结束
-        bad[1]["planned_start"] = "2030-01-02T09:00:00+08:00"
+        # review 开始月份早于 research 结束月份（跨月倒置）
+        bad[1]["planned_start"] = "2029-12-02T09:00:00+08:00"
         resp = await app_client.post(
             "/api/v1/requirements",
             json=create_body(stages=bad),

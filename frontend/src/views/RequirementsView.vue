@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
-import { REQ_STATUSES, STAGE_TYPES, PRODUCT_LINES, statusMeta, fmtTime } from '../format'
+import { REQ_STATUSES, STAGE_TYPES, PRODUCT_LINES, REQ_CATEGORIES, statusMeta, fmtMonth } from '../format'
 
 const router = useRouter()
 const loading = ref(false)
@@ -25,6 +25,9 @@ const users = ref([])
 const createForm = reactive({
   title: '',
   product_line: '',
+  category: '',
+  source: '',
+  planned_release: '', // 预计上线时间（必填），映射为 release 环节 planned_end
   priority: 'P2',
   description: '',
   stages: STAGE_TYPES.map((s) => ({
@@ -68,25 +71,58 @@ async function openCreate() {
   }
 }
 
+// 月份 → 后端 datetime：开始取当月 1 日 00:00，结束取当月最后一日 23:59:59
+function monthStart(m) {
+  return m ? `${m}-01T00:00:00+08:00` : null
+}
+function monthEnd(m) {
+  if (!m) return null
+  const [y, mo] = m.split('-').map(Number)
+  const last = new Date(y, mo, 0).getDate()
+  return `${m}-${String(last).padStart(2, '0')}T23:59:59+08:00`
+}
+
 async function submitCreate() {
+  // 必填项保存时校验：需求名称、产品线、预计上线时间
   if (!createForm.title.trim()) {
-    ElMessage.warning('请填写需求标题')
+    ElMessage.warning('请填写需求名称')
+    return
+  }
+  if (!createForm.product_line) {
+    ElMessage.warning('请选择产品线')
+    return
+  }
+  if (!createForm.planned_release) {
+    ElMessage.warning('请选择预计上线时间')
     return
   }
   creating.value = true
   try {
-    // 日期型选择：开始取当日 00:00，结束取当日 23:59:59（+08:00）
     const stages = createForm.stages
       .filter((s) => s.planned_start || s.planned_end)
       .map((s) => ({
         stage_type: s.stage_type,
-        planned_start: s.planned_start ? `${s.planned_start}T00:00:00+08:00` : null,
-        planned_end: s.planned_end ? `${s.planned_end}T23:59:59+08:00` : null,
+        planned_start: monthStart(s.planned_start),
+        planned_end: monthEnd(s.planned_end),
         assignee_id: s.assignee_id,
       }))
+    // 预计上线时间 = release 环节 planned_end（若表格中未单独填 release 行则注入）
+    const releaseRow = stages.find((s) => s.stage_type === 'release')
+    if (releaseRow) {
+      releaseRow.planned_end = monthEnd(createForm.planned_release)
+    } else {
+      stages.push({
+        stage_type: 'release',
+        planned_start: null,
+        planned_end: monthEnd(createForm.planned_release),
+        assignee_id: null,
+      })
+    }
     const created = await api.post('/requirements', {
       title: createForm.title,
-      product_line: createForm.product_line || null,
+      product_line: createForm.product_line,
+      category: createForm.category || null,
+      source: createForm.source || null,
       priority: createForm.priority,
       description: createForm.description || null,
       stages,
@@ -95,6 +131,9 @@ async function submitCreate() {
     createVisible.value = false
     createForm.title = ''
     createForm.product_line = ''
+    createForm.category = ''
+    createForm.source = ''
+    createForm.planned_release = ''
     createForm.description = ''
     createForm.priority = 'P2'
     createForm.stages.forEach((s) => {
@@ -148,36 +187,42 @@ onMounted(load)
 
     <el-card shadow="never" class="table-card">
       <el-table :data="rows" v-loading="loading" @row-click="(r) => router.push(`/requirements/${r.id}`)" style="cursor: pointer">
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="product_line" label="产品线" width="130">
+        <el-table-column prop="id" label="序号" width="70" />
+        <el-table-column prop="product_line" label="产品线" width="120">
           <template #default="{ row }">
             <el-tag v-if="row.product_line" effect="plain" round>{{ row.product_line }}</el-tag>
             <span v-else>—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="priority" label="优先级" width="90">
+        <el-table-column prop="category" label="需求分类" width="100">
+          <template #default="{ row }">{{ row.category || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="title" label="需求名称" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="source" label="需求来源" width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.source || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="priority" label="优先级" width="80">
           <template #default="{ row }">
             <el-tag :type="row.priority === 'P0' ? 'danger' : row.priority === 'P1' ? 'warning' : 'info'" effect="plain">
               {{ row.priority }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="current_stage" label="当前环节" width="140">
+        <el-table-column prop="current_stage" label="当前环节" width="110">
           <template #default="{ row }">{{ row.current_stage || '—' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="statusMeta(REQ_STATUSES, row.status).type" effect="dark" round>
               {{ statusMeta(REQ_STATUSES, row.status).label }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="负责 PM" width="110">
+        <el-table-column label="负责人" width="90">
           <template #default="{ row }">{{ row.pm_name || `#${row.responsible_pm_id}` }}</template>
         </el-table-column>
-        <el-table-column label="更新时间" width="150">
-          <template #default="{ row }">{{ fmtTime(row.updated_at) }}</template>
+        <el-table-column label="预计上线" width="100">
+          <template #default="{ row }">{{ fmtMonth(row.planned_release) }}</template>
         </el-table-column>
       </el-table>
 
@@ -191,35 +236,62 @@ onMounted(load)
       />
     </el-card>
 
-    <el-dialog v-model="createVisible" title="新建需求" width="860px" top="6vh">
+    <el-dialog v-model="createVisible" title="新建需求" width="880px" top="6vh">
       <el-form label-width="90px">
-        <el-form-item label="标题" required>
-          <el-input v-model="createForm.title" maxlength="200" />
-        </el-form-item>
-        <el-form-item label="产品线">
-          <el-select v-model="createForm.product_line" clearable placeholder="选择产品线" style="width: 100%">
-            <el-option v-for="p in PRODUCT_LINES" :key="p" :label="p" :value="p" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="优先级">
-          <el-radio-group v-model="createForm.priority">
-            <el-radio-button v-for="p in ['P0', 'P1', 'P2', 'P3']" :key="p" :value="p">{{ p }}</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="createForm.description" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-divider content-position="left">环节排期（可留空，顺序约束自动校验）</el-divider>
+        <el-row :gutter="16">
+          <el-col :span="24">
+            <el-form-item label="需求名称" required>
+              <el-input v-model="createForm.title" maxlength="200" placeholder="请输入需求名称" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="产品线" required>
+              <el-select v-model="createForm.product_line" clearable placeholder="选择产品线（必填）" style="width: 100%">
+                <el-option v-for="p in PRODUCT_LINES" :key="p" :label="p" :value="p" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="预计上线" required>
+              <el-date-picker v-model="createForm.planned_release" type="month" value-format="YYYY-MM" placeholder="选择年月（必填）" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="需求分类">
+              <el-radio-group v-model="createForm.category">
+                <el-radio-button v-for="c in REQ_CATEGORIES" :key="c" :value="c">{{ c }}</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="优先级">
+              <el-radio-group v-model="createForm.priority">
+                <el-radio-button v-for="p in ['P0', 'P1', 'P2', 'P3']" :key="p" :value="p">{{ p }}</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="需求来源">
+              <el-input v-model="createForm.source" maxlength="128" placeholder="如：客户反馈 / 内部规划 / 售前支持" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="描述">
+              <el-input v-model="createForm.description" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-divider content-position="left">环节排期（按月填写，可留空；同月相邻环节视为合理衔接）</el-divider>
         <el-table :data="createForm.stages" size="small">
           <el-table-column prop="label" label="环节" width="100" />
-          <el-table-column label="预计开始">
+          <el-table-column label="预计开始（年月）">
             <template #default="{ row }">
-              <el-date-picker v-model="row.planned_start" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+              <el-date-picker v-model="row.planned_start" type="month" value-format="YYYY-MM" placeholder="如 2026-09" style="width: 100%" />
             </template>
           </el-table-column>
-          <el-table-column label="预计结束">
+          <el-table-column label="预计结束（年月）">
             <template #default="{ row }">
-              <el-date-picker v-model="row.planned_end" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+              <el-date-picker v-model="row.planned_end" type="month" value-format="YYYY-MM" placeholder="如 2026-09" style="width: 100%" />
             </template>
           </el-table-column>
           <el-table-column label="负责人">

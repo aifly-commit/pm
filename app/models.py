@@ -67,8 +67,11 @@ class Requirement(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    # 产品线（enums.PRODUCT_LINES，可空）
+    # 产品线（enums.PRODUCT_LINES，创建必填）
     product_line: Mapped[Optional[str]] = mapped_column(String(32))
+    # 需求分类（enums.REQ_CATEGORIES）与需求来源（自由文本）
+    category: Mapped[Optional[str]] = mapped_column(String(16))
+    source: Mapped[Optional[str]] = mapped_column(String(128))
     priority: Mapped[str] = mapped_column(String(4), nullable=False, default="P2")
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=RequirementStatus.NOT_STARTED.value

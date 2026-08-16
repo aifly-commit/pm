@@ -346,7 +346,10 @@ class TestPlanUpdate:
         token = await login_token(app_client, "pm1")
         resp = await app_client.post(
             "/api/v1/requirements",
-            json=create_body(stages=[]),  # 不带任何排期
+            # 仅填必填的预计上线时间，其余环节不排期
+            json=create_body(
+                stages=[{"stage_type": "release", "planned_end": "2030-03-01T23:59:59+08:00"}]
+            ),
             headers=auth_header(token),
         )
         assert resp.status_code == 201, resp.text
@@ -387,11 +390,11 @@ class TestPlanUpdate:
         token = await login_token(app_client, "pm1")
         detail = await make_requirement(app_client, token)
         sid = stage_of(detail, "research")["id"]
-        # research 结束改到 review 结束之后 → 破坏下游顺序
+        # research 结束改到 review 开始月份（1 月）之后的 2 月 → 跨月倒置破坏下游顺序
         resp = await app_client.patch(
             f"/api/v1/stages/{sid}/plan",
             json={
-                "planned_end": "2030-01-06T18:00:00+08:00",
+                "planned_end": "2030-02-06T18:00:00+08:00",
                 "reason": "冲突改期",
             },
             headers=auth_header(token),

@@ -213,7 +213,9 @@ class TestRequirementWeekly:
         token = await login_token(app_client, "pm1")
         resp = await app_client.post(
             "/api/v1/requirements",
-            json=create_body(stages=[]),
+            json=create_body(
+                stages=[{"stage_type": "release", "planned_end": "2030-03-01T23:59:59+08:00"}]
+            ),
             headers=auth_header(token),
         )
         assert resp.status_code == 201, resp.text
