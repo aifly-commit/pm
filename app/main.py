@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import auth, notifications, requirements, stages, users
+from app.api import auth, notifications, projects, requirements, stages, stats, users
 from app.core.config import ensure_secret_key_safe
 from app.scheduler import create_scheduler
 
@@ -43,6 +43,8 @@ app.include_router(users.router, prefix=API_PREFIX)
 app.include_router(requirements.router, prefix=API_PREFIX)
 app.include_router(stages.router, prefix=API_PREFIX)
 app.include_router(notifications.router, prefix=API_PREFIX)
+app.include_router(projects.router, prefix=API_PREFIX)
+app.include_router(stats.router, prefix=API_PREFIX)
 
 
 @app.get(f"{API_PREFIX}/health")

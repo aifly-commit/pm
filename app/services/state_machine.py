@@ -157,6 +157,7 @@ def apply_revert(
 
     to_stage.status = StageStatus.IN_PROGRESS.value
     to_stage.actual_end = None
+    to_stage.reminder_sent = False  # 重新执行后临近排期需再次提醒（design.md 4.1）
 
     reset: list[RequirementStage] = []
     for s in stages:
@@ -164,6 +165,7 @@ def apply_revert(
             s.status = StageStatus.NOT_STARTED.value
             s.actual_start = None
             s.actual_end = None
+            s.reminder_sent = False  # 重置环节清除旧的临期提醒标记，避免漏发
             reset.append(s)
 
     recalc_status(requirement, stages, now)
@@ -204,6 +206,8 @@ def apply_resume_shift(
                     s.planned_start += delta
                 if s.planned_end is not None:
                     s.planned_end += delta
+                # 排期已顺延，旧的临期提醒标记作废，临近新排期时应再次提醒
+                s.reminder_sent = False
     requirement.status = requirement.paused_from or "not_started"
     requirement.paused_from = None
     requirement.paused_at = None

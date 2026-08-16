@@ -177,3 +177,23 @@ class Notification(Base):
     dedupe_key: Mapped[Optional[str]] = mapped_column(String(128), unique=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class RequirementStatusLog(Base):
+    """需求状态变更日志（design.md 10.2：状态变更可追溯；统计"新产生延期"依据）。"""
+
+    __tablename__ = "requirement_status_logs"
+    __table_args__ = (
+        Index("ix_status_logs_requirement", "requirement_id"),
+        Index("ix_status_logs_created", "created_at", "to_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    requirement_id: Mapped[int] = mapped_column(
+        ForeignKey("requirements.id"), nullable=False
+    )
+    from_status: Mapped[Optional[str]] = mapped_column(String(16))
+    to_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # 操作人；系统兜底刷新（定时扫描）为 NULL
+    changed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

@@ -285,5 +285,16 @@ async def run_scan(session: AsyncSession, now: datetime | None = None) -> ScanRe
         recalc_status(req, stages, now)
         if req.status != before:
             report.requirements_refreshed.append(req_id)
+            # 系统触发的变更同样留痕（changed_by=NULL，design.md 10.2）
+            from app.models import RequirementStatusLog
+
+            session.add(
+                RequirementStatusLog(
+                    requirement_id=req.id,
+                    from_status=before,
+                    to_status=req.status,
+                    changed_by=None,
+                )
+            )
 
     return report

@@ -303,6 +303,23 @@ class TestRevert:
         with pytest.raises(FlowError, match="不可发起回退"):
             apply_revert(requirement, stages, review, research, NOW)
 
+    async def test_revert_clears_reminder_sent(self, requirement, stages):
+        # 回退目标与下游重置环节的临期提醒标记一并清除（design.md 4.1 防漏发）
+        for st in (StageType.RESEARCH, StageType.REVIEW, StageType.BACKEND_DEV):
+            start_and_complete(get_stage(stages, st))
+        testing = get_stage(stages, StageType.TESTING)
+        testing.status = StageStatus.IN_PROGRESS.value
+        testing.actual_start = NOW
+        backend = get_stage(stages, StageType.BACKEND_DEV)
+        backend.reminder_sent = True
+        release = get_stage(stages, StageType.RELEASE)
+        release.reminder_sent = True
+
+        apply_revert(requirement, stages, testing, backend, NOW)
+
+        assert backend.reminder_sent is False  # 回退目标
+        assert release.reminder_sent is False  # 下游重置环节
+
 
 # ------------------------------------------------------------- 暂停 / 恢复
 
@@ -352,6 +369,20 @@ class TestPauseResume:
         shifted = apply_resume_shift(requirement, stages, NOW)
         assert shifted == []
         assert requirement.status == "not_started"
+
+    async def test_resume_shift_clears_reminder_sent(self, requirement, stages):
+        # 顺延环节的临期提醒标记作废，临近新排期时应再次提醒（防漏发）
+        make_in_progress(stages)
+        recalc_status(requirement, stages, NOW)
+        backend = get_stage(stages, StageType.BACKEND_DEV)
+        backend.planned_start = d(-5)
+        backend.planned_end = d(3)
+        backend.reminder_sent = True
+        pause(requirement, NOW)
+
+        apply_resume_shift(requirement, stages, NOW + timedelta(days=2))
+
+        assert backend.reminder_sent is False
 
     async def test_resume_not_paused_rejected(self, requirement, stages):
         with pytest.raises(FlowError, match="仅暂停中的需求可恢复"):

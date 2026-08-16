@@ -164,7 +164,7 @@ async def pause_requirement_endpoint(
     try:
         req = await req_service.get_requirement(session, req_id)
         assert_requirement_write(user, req)
-        await pause_requirement(session, req)
+        await pause_requirement(session, req, actor_id=user.id)
         await session.commit()
         stages = await req_service.get_stages(session, req_id)
     except RequirementError as e:
@@ -184,7 +184,7 @@ async def resume_requirement_endpoint(
     try:
         req = await req_service.get_requirement(session, req_id)
         assert_requirement_write(user, req)
-        await resume_requirement(session, req)
+        await resume_requirement(session, req, actor_id=user.id)
         await session.commit()
         stages = await req_service.get_stages(session, req_id)
     except RequirementError as e:
@@ -204,7 +204,7 @@ async def mark_delayed_endpoint(
     try:
         req = await req_service.get_requirement(session, req_id)
         assert_requirement_write(user, req)
-        await mark_delayed(session, req, body.reason)
+        await mark_delayed(session, req, body.reason, actor_id=user.id)
         await session.commit()
         stages = await req_service.get_stages(session, req_id)
     except RequirementError as e:
@@ -224,7 +224,7 @@ async def unmark_delayed_endpoint(
     try:
         req = await req_service.get_requirement(session, req_id)
         assert_requirement_write(user, req)
-        await unmark_delayed(session, req, body.reason)
+        await unmark_delayed(session, req, body.reason, actor_id=user.id)
         await session.commit()
         stages = await req_service.get_stages(session, req_id)
     except RequirementError as e:

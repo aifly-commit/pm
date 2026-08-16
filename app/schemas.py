@@ -226,3 +226,91 @@ class StageRevertIn(BaseModel):
 
 class StageAssigneeUpdate(BaseModel):
     assignee_id: int | None
+
+
+# ---------------------------------------------------------------- 项目
+
+from datetime import date  # noqa: E402
+
+PROJECT_STATUS_PATTERN = (
+    r"^(not_started|in_progress|done|paused|terminated)$"
+)
+
+
+class ContactIn(BaseModel):
+    """接口人（design.md 5.1）。"""
+
+    name: str = Field(min_length=1, max_length=64)
+    phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=128)
+    im: str | None = Field(default=None, max_length=128)
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+    contacts: list[ContactIn] = Field(default_factory=list)
+    status: str = Field(default="not_started", pattern=PROJECT_STATUS_PATTERN)
+    planned_start: date | None = None
+    planned_end: date | None = None
+    owner_id: int | None = None  # 默认当前用户；仅 Admin 可指定他人
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = None
+    contacts: list[ContactIn] | None = None
+    progress_note: str | None = None
+    progress_percent: int | None = Field(default=None, ge=0, le=100)
+    status: str | None = Field(default=None, pattern=PROJECT_STATUS_PATTERN)
+    planned_start: date | None = None
+    planned_end: date | None = None
+    actual_start: date | None = None
+    actual_end: date | None = None
+    owner_id: int | None = None
+
+
+class ProjectOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    description: str | None
+    contacts: list[dict] | None
+    progress_note: str | None
+    progress_percent: int
+    status: str
+    planned_start: date | None
+    planned_end: date | None
+    actual_start: date | None
+    actual_end: date | None
+    owner_id: int
+    created_at: TZDateTime
+    updated_at: TZDateTime
+
+
+class ProjectRequirementItem(BaseModel):
+    """对接需求清单条目（design.md 5.2：标题、当前环节、状态、是否延期）。"""
+
+    id: int
+    title: str
+    priority: str
+    status: str
+    current_stage: str | None
+    is_delayed: bool
+
+
+class ProjectDetailOut(ProjectOut):
+    requirements: list[ProjectRequirementItem]
+    total: int
+    done_count: int
+    completion_rate: float
+
+
+class ProjectListOut(BaseModel):
+    items: list[ProjectOut]
+    total: int
+
+
+class AttachRequirementIn(BaseModel):
+    requirement_id: int

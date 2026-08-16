@@ -17,6 +17,7 @@ from app.enums import StageStatus, StageType
 from app.models import (
     Requirement,
     RequirementStage,
+    RequirementStatusLog,
     StageRevertLog,
     StageTimeChangeLog,
     User,
@@ -68,6 +69,25 @@ async def _load_and_touch(
     return stages
 
 
+def _log_status_change(
+    session: AsyncSession,
+    requirement: Requirement,
+    old_status: str,
+    actor_id: int | None,
+) -> None:
+    """状态变更留痕（design.md 10.2）；统计"新产生延期"依据 to_status=delayed。"""
+    if requirement.status == old_status:
+        return
+    session.add(
+        RequirementStatusLog(
+            requirement_id=requirement.id,
+            from_status=old_status,
+            to_status=requirement.status,
+            changed_by=actor_id,
+        )
+    )
+
+
 async def start_stage(
     session: AsyncSession, stage: RequirementStage, user: User
 ) -> Requirement:
@@ -75,6 +95,7 @@ async def start_stage(
     requirement = await session.get(Requirement, stage.requirement_id)
     assert_stage_progress(user, requirement, stage)
     stages = await get_stages(session, requirement.id)
+    old_status = requirement.status
     try:
         state_machine.can_start_stage(stages, stage)
         stage.status = StageStatus.IN_PROGRESS.value
@@ -82,6 +103,7 @@ async def start_stage(
         state_machine.recalc_status(requirement, stages, now_sh())
     except FlowError as e:
         raise RequirementError(e.message)
+    _log_status_change(session, requirement, old_status, user.id)
     await _load_and_touch(session, requirement)
     return requirement
 
@@ -93,6 +115,7 @@ async def complete_stage(
     requirement = await session.get(Requirement, stage.requirement_id)
     assert_stage_progress(user, requirement, stage)
     stages = await get_stages(session, requirement.id)
+    old_status = requirement.status
     try:
         state_machine.can_complete_stage(stage)
         stage.status = StageStatus.DONE.value
@@ -104,6 +127,7 @@ async def complete_stage(
             state_machine.recalc_status(requirement, stages, now_sh())
     except FlowError as e:
         raise RequirementError(e.message)
+    _log_status_change(session, requirement, old_status, user.id)
     await _load_and_touch(session, requirement)
     return requirement
 
@@ -119,6 +143,7 @@ async def revert_stage(
     requirement = await session.get(Requirement, from_stage.requirement_id)
     assert_requirement_write(user, requirement)
     stages = await get_stages(session, requirement.id)
+    old_status = requirement.status
     to_stage = next((s for s in stages if s.id == to_stage_id), None)
     if to_stage is None or to_stage.requirement_id != requirement.id:
         raise RequirementError(f"目标环节 {to_stage_id} 不存在或不属于该需求", status=404)
@@ -128,6 +153,7 @@ async def revert_stage(
         )
     except FlowError as e:
         raise RequirementError(e.message)
+    _log_status_change(session, requirement, old_status, user.id)
     session.add(
         StageRevertLog(
             requirement_id=requirement.id,
@@ -166,6 +192,7 @@ async def update_stage_plan(
         raise RequirementError("已完成的环节不允许再修改预估时间")
 
     old_start, old_end = stage.planned_start, stage.planned_end
+    old_status = requirement.status
     new_start = planned_start if planned_start is not None else old_start
     new_end = planned_end if planned_end is not None else old_end
     if new_start == old_start and new_end == old_end:
@@ -204,6 +231,7 @@ async def update_stage_plan(
     stage.last_delay_reason = reason
 
     state_machine.recalc_status(requirement, stages, now_sh())
+    _log_status_change(session, requirement, old_status, user.id)
     await _load_and_touch(session, requirement)
     return requirement
 
@@ -222,12 +250,14 @@ async def update_stage_assignee(
 
 
 async def pause_requirement(
-    session: AsyncSession, requirement: Requirement
+    session: AsyncSession, requirement: Requirement, actor_id: int | None = None
 ) -> Requirement:
+    old_status = requirement.status
     try:
         state_machine.pause(requirement, now_sh())
     except FlowError as e:
         raise RequirementError(e.message)
+    _log_status_change(session, requirement, old_status, actor_id)
     stages = await get_stages(session, requirement.id)
     await notify_status_changed(session, requirement, stages, "被暂停")
     await _load_and_touch(session, requirement)
@@ -235,14 +265,16 @@ async def pause_requirement(
 
 
 async def resume_requirement(
-    session: AsyncSession, requirement: Requirement
+    session: AsyncSession, requirement: Requirement, actor_id: int | None = None
 ) -> Requirement:
     """恢复需求：顺延未完成环节时间并写 auto 日志（design.md 3.3 暂停时钟）。"""
+    old_status = requirement.status
     stages = await get_stages(session, requirement.id)
     try:
         shifted = state_machine.apply_resume_shift(requirement, stages, now_sh())
     except FlowError as e:
         raise RequirementError(e.message)
+    _log_status_change(session, requirement, old_status, actor_id)
     for stage, old_start, old_end in shifted:
         if old_start is not None:
             session.add(
@@ -275,26 +307,30 @@ async def resume_requirement(
 
 
 async def mark_delayed(
-    session: AsyncSession, requirement: Requirement, reason: str
+    session: AsyncSession, requirement: Requirement, reason: str, actor_id: int | None = None
 ) -> Requirement:
+    old_status = requirement.status
     stages = await get_stages(session, requirement.id)
     try:
         state_machine.mark_delayed(requirement, reason, now_sh(), stages)
     except FlowError as e:
         raise RequirementError(e.message)
+    _log_status_change(session, requirement, old_status, actor_id)
     await notify_status_changed(session, requirement, stages, "被人工标记延期")
     await _load_and_touch(session, requirement)
     return requirement
 
 
 async def unmark_delayed(
-    session: AsyncSession, requirement: Requirement, reason: str
+    session: AsyncSession, requirement: Requirement, reason: str, actor_id: int | None = None
 ) -> Requirement:
+    old_status = requirement.status
     stages = await get_stages(session, requirement.id)
     try:
         state_machine.unmark_delayed(requirement, reason, now_sh(), stages)
     except FlowError as e:
         raise RequirementError(e.message)
+    _log_status_change(session, requirement, old_status, actor_id)
     await notify_status_changed(session, requirement, stages, "解除人工延期标记")
     await _load_and_touch(session, requirement)
     return requirement
