@@ -16,8 +16,17 @@ pip install -e ".[dev]" -i https://pypi.tuna.tsinghua.edu.cn/simple
 # 数据库迁移
 alembic upgrade head
 
-# 启动（必须单 worker，见 design.md 4.2）
-uvicorn app.main:app --reload --workers 1
+# 首次部署：创建管理员
+PM_SECRET_KEY=<随机密钥> python -m app.main create-admin admin <密码> 管理员
+
+# 启动后端（必须单 worker，见 design.md 4.2；生产必须设置 PM_SECRET_KEY）
+PM_SECRET_KEY=<随机密钥> uvicorn app.main:app --reload --workers 1
+
+# 启动前端（开发模式，代理 /api → 127.0.0.1:8000）
+cd frontend && npm install --registry=https://registry.npmmirror.com && npm run dev
+
+# 前端构建
+cd frontend && npm run build   # 产物在 frontend/dist，可由 Nginx 托管
 
 # 测试（覆盖率硬性要求 ≥95%，见 pyproject.toml）
 pytest

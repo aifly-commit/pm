@@ -1,11 +1,11 @@
-"""用户管理路由（仅 Admin，design.md 8.5）。"""
+"""用户管理路由（仅 Admin，design.md 8.5）+ 用户目录（全员可读，指派下拉用）。"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import get_current_user, require_admin
 from app.db import get_session
 from app.models import User
 from app.schemas import ResetPasswordIn, TransferIn, UserCreate, UserOut, UserUpdate
@@ -13,6 +13,19 @@ from app.services import users as user_service
 from app.services.users import UserError
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_admin)])
+
+# 用户目录：任何登录用户可访问（前端"环节负责人/PM"下拉数据源）
+directory_router = APIRouter(prefix="/users", tags=["users"])
+
+
+@directory_router.get("/directory")
+async def user_directory(
+    session: AsyncSession = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> list[dict]:
+    """启用用户的基础字段（id/显示名/角色）。"""
+    rows = await user_service.list_users(session, is_active=True)
+    return [{"id": u.id, "display_name": u.display_name, "role": u.role} for u in rows]
 
 
 @router.get("", response_model=list[UserOut])

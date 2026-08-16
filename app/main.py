@@ -40,6 +40,7 @@ app = FastAPI(title="pm — 需求管理与项目管理平台", version="0.1.0",
 API_PREFIX = "/api/v1"
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(users.router, prefix=API_PREFIX)
+app.include_router(users.directory_router, prefix=API_PREFIX)
 app.include_router(requirements.router, prefix=API_PREFIX)
 app.include_router(stages.router, prefix=API_PREFIX)
 app.include_router(notifications.router, prefix=API_PREFIX)

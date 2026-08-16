@@ -25,6 +25,29 @@ class TestPermission:
         assert resp.status_code in (401, 403)
 
 
+class TestUserDirectory:
+    async def test_directory_accessible_to_pm(self, app_client, pm_user, admin_user, db):
+        from tests.conftest import seed_user
+
+        inactive = await seed_user(db, "ghost_user", "developer")
+        inactive.is_active = False
+        await db.flush()
+        token = await login_token(app_client, "pm1")
+        resp = await app_client.get(
+            "/api/v1/users/directory", headers=auth_header(token)
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        ids = {u["id"] for u in body}
+        assert pm_user.id in ids and admin_user.id in ids
+        assert inactive.id not in ids  # 停用用户不出现在目录
+        assert all(set(u.keys()) == {"id", "display_name", "role"} for u in body)
+
+    async def test_directory_requires_auth(self, app_client):
+        resp = await app_client.get("/api/v1/users/directory")
+        assert resp.status_code in (401, 403)
+
+
 class TestCreateUser:
     async def test_create_success(self, app_client, admin_user):
         resp = await app_client.post(
