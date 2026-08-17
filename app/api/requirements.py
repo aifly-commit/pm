@@ -16,6 +16,7 @@ from app.schemas import (
     RequirementDetailOut,
     RequirementListOut,
     RequirementOut,
+    RequirementStatusUpdate,
     RequirementUpdate,
     StageOut,
 )
@@ -117,6 +118,29 @@ async def create_requirement(
     stages = await req_service.get_stages(session, req.id)
     names = await _names_for(session, [req])
     return _to_out(req, stages, names)
+
+
+@router.patch("/requirements/{req_id}/status", response_model=RequirementDetailOut)
+async def set_requirement_status_endpoint(
+    req_id: int,
+    body: RequirementStatusUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> RequirementDetailOut:
+    """单独修改需求状态（design.md 3.3 手动状态覆盖）。
+
+    status 为枚举值 → 冻结为该状态；null → 回到自动重算。
+    """
+    try:
+        req = await req_service.get_requirement(session, req_id)
+        assert_requirement_write(user, req)
+        await req_service.set_requirement_status(session, req, body.status, user.id)
+        await session.commit()
+    except RequirementError as e:
+        raise _error(e)
+    except StagePermissionError as e:
+        raise HTTPException(status_code=403, detail=e.message)
+    return await get_requirement(req_id, session, user)
 
 
 @router.get("/requirements/{req_id}", response_model=RequirementDetailOut)

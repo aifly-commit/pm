@@ -12,9 +12,11 @@ from app.enums import PARALLEL_STAGES, STAGE_SEQ, StageStatus, StageType
 from app.models import (
     Requirement,
     RequirementStage,
+    RequirementStatusLog,
     StageRevertLog,
     StageTimeChangeLog,
 )
+from app.services.state_machine import recalc_status
 from app.services.time_rules import validate_stage_times
 
 STAGE_LABEL = {
@@ -305,3 +307,37 @@ async def pm_name_map(session: AsyncSession, pm_ids: set[int]) -> dict[int, str]
         )
     ).all()
     return {uid: name for uid, name in rows}
+
+
+async def set_requirement_status(
+    session: AsyncSession,
+    requirement: Requirement,
+    status: str | None,
+    actor_id: int | None = None,
+) -> Requirement:
+    """单独修改需求状态（design.md 3.3 手动状态覆盖）。
+
+    - status 为枚举值：写入 manual_status 覆盖位并同步 status，冻结状态；
+    - status 为 None：清除覆盖位，按环节重算回到自动状态。
+    两种情况都写 RequirementStatusLog。
+    """
+    old_status = requirement.status
+    if status is None:
+        requirement.manual_status = None
+        stages = await get_stages(session, requirement.id)
+        recalc_status(requirement, stages, now_sh())
+    else:
+        requirement.manual_status = status
+        requirement.status = status
+    requirement.updated_at = now_sh()
+    if requirement.status != old_status:
+        session.add(
+            RequirementStatusLog(
+                requirement_id=requirement.id,
+                from_status=old_status,
+                to_status=requirement.status,
+                changed_by=actor_id,
+            )
+        )
+    await session.flush()
+    return requirement

@@ -61,6 +61,7 @@ PRODUCT_LINES: tuple[str, ...] = (
     "DMP",
     "DTS",
     "DataAgent",
+    "横向",  # 跨产品线（AI 数据服务化等）
 )
 
 # 需求分类枚举

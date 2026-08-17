@@ -121,7 +121,7 @@ async def complete_stage(
         stage.status = StageStatus.DONE.value
         stage.actual_end = now_sh()
         if stage.stage_type == StageType.RELEASE.value:
-            requirement.status = "done"  # 终态（design.md 3.3）
+            state_machine.apply_status(requirement, "done")  # 终态（design.md 3.3；manual_status 覆盖时不动）
             await notify_status_changed(session, requirement, stages, "已完成（上线）")
         else:
             state_machine.recalc_status(requirement, stages, now_sh())

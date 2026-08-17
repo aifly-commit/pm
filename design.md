@@ -157,6 +157,9 @@
 - **状态重算在写操作中同步执行**：start / complete / revert / 改期 / 暂停 / 恢复 / 人工标记(解除)延期等操作落库时立即重算需求状态并刷新，**不依赖定时任务**；30 分钟定时任务仅作为兜底（覆盖时间自然流逝导致的逾期）。
 - **暂停的时钟处理**：暂停时记录 `paused_at`，该需求所有未完成环节**冻结逾期判定**（暂停期间不判定逾期、不产生临期/逾期通知）；恢复时对暂停期间的未完成环节的 `planned_start` / `planned_end` **统一顺延** `暂停时长`（自然日口径，写入变更历史，原因自动记录为"需求暂停顺延"，不计入人工"延期调整次数"统计），然后按新时间重新判定状态。
 - **逾期扫描的范围**：需求状态为 done（终态）或 paused（冻结判定）的不参与；**未开始的需求参与**——首个环节即使还没 start，其 planned_end 超期同样判定逾期（排了期不启动也算延期）。
+- **手动状态覆盖（manual_status）**：`requirements.manual_status` 为可选覆盖位。PM/管理员可通过 `PATCH /requirements/{id}/status`（body `{"status": <枚举值>}`）单独修改需求状态，写入 `manual_status` 并冻结：此后所有 recalc（写操作内同步重算、30 分钟兜底扫描）直接返回该覆盖值，**不受环节流转/暂停恢复/改期/人工延期影响**，直到再次手动修改或显式清除（body `{"status": null}` → 清除覆盖位、按环节重算回到自动口径）。设/清均写 `RequirementStatusLog`（操作人留痕）。
+  - 与暂停顺延机制的区别：手动设 `paused` **仅是状态标签**（`paused_from`/`paused_at` 为空，不触发日期顺延）；需要暂停时钟与恢复顺延能力时仍走 `pause` / `resume` 端点。
+  - 手动设 `done` 为终态标签，不影响环节实际时间记录；后续若完成上线环节，`manual_status` 非空时状态不变（覆盖生效）。
 
 ### 3.4 修改预估时间规则（核心约束）
 
@@ -424,6 +427,7 @@ users 1 ──── n notifications
 | POST | `/requirements/{id}/resume` | 恢复需求（自动顺延未完成环节时间并重算状态） |
 | POST | `/requirements/{id}/mark-delayed` | PM 人工标记延期，body：`{"reason": "..."}`（reason 必填） |
 | POST | `/requirements/{id}/unmark-delayed` | PM 解除人工延期，body：`{"reason": "..."}`（reason 必填；若仍有系统逾期则状态保持 delayed） |
+| PATCH | `/requirements/{id}/status` | 单独修改需求状态，body：`{"status": <枚举值\|null>}`。设值→冻结为该状态（manual_status 覆盖）；null→清除覆盖回到自动重算。见 3.3 |
 
 > 删除需求：第一版**不提供**删除端点（需求一旦创建全程留痕）；确需清理由 Admin 直接操作数据库。
 

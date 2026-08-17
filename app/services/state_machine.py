@@ -54,11 +54,15 @@ def has_system_overdue(stages: list[RequirementStage], now: datetime) -> bool:
 def recalc_status(requirement: Requirement, stages: list[RequirementStage], now: datetime) -> str:
     """按 3.3 口径重算需求状态并写回 requirement.status，返回新状态。
 
+    - manual_status 覆盖位非空时直接返回它，冻结状态（design.md 3.3 手动状态）；
     - done 为终态，不再变化；
     - paused 由暂停/恢复操作维护，此处不动；
     - delayed = 系统逾期 or 人工标记；
     - 任一环节进行中（或已有实际开始）→ in_progress；否则 not_started。
     """
+    if requirement.manual_status is not None:
+        requirement.status = requirement.manual_status
+        return requirement.status
     if requirement.status == "done":
         return requirement.status
     if requirement.status == "paused":
@@ -174,13 +178,23 @@ def apply_revert(
 
 # ---------------------------------------------------------------- 暂停 / 恢复
 
+def apply_status(requirement: Requirement, value: str) -> None:
+    """写 status，但 manual_status 覆盖位非空时冻结不动（design.md 3.3）。
+
+    供 complete（release→done）、pause、resume 等流程替代裸 `req.status = X`，
+    保证手动覆盖不被这些流程同步改写。
+    """
+    if requirement.manual_status is None:
+        requirement.status = value
+
+
 def pause(requirement: Requirement, now: datetime) -> None:
     """暂停需求：记录暂停前状态与暂停时刻（design.md 3.3 暂停的时钟处理）。"""
     if requirement.status in ("paused", "done"):
         raise FlowError(f"当前状态 {requirement.status} 不可暂停")
     requirement.paused_from = requirement.status
     requirement.paused_at = now
-    requirement.status = "paused"
+    apply_status(requirement, "paused")
 
 
 def apply_resume_shift(
@@ -208,7 +222,7 @@ def apply_resume_shift(
                     s.planned_end += delta
                 # 排期已顺延，旧的临期提醒标记作废，临近新排期时应再次提醒
                 s.reminder_sent = False
-    requirement.status = requirement.paused_from or "not_started"
+    apply_status(requirement, requirement.paused_from or "not_started")
     requirement.paused_from = None
     requirement.paused_at = None
     return shifted
@@ -244,6 +258,7 @@ __all__ = [
     "system_overdue_stages",
     "has_system_overdue",
     "recalc_status",
+    "apply_status",
     "can_start_stage",
     "can_complete_stage",
     "can_revert",
