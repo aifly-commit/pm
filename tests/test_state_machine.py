@@ -11,6 +11,7 @@ from app.services.state_machine import (
     FlowError,
     apply_revert,
     apply_resume_shift,
+    apply_status,
     can_complete_stage,
     can_start_stage,
     has_system_overdue,
@@ -128,6 +129,54 @@ class TestRecalcStatus:
         make_in_progress(stages)
         get_stage(stages, StageType.TESTING).planned_end = d(-5)
         assert recalc_status(requirement, stages, NOW) == "delayed"
+
+
+# ------------------------------------------------------------- 手动状态覆盖（design.md 3.3）
+
+class TestManualStatusOverride:
+    async def test_override_wins_over_in_progress_stage(self, requirement, stages):
+        # 有进行中环节，按自动口径应 in_progress；手动覆盖 not_started 胜出
+        make_in_progress(stages)
+        requirement.manual_status = "not_started"
+        assert recalc_status(requirement, stages, NOW) == "not_started"
+        assert requirement.status == "not_started"
+
+    async def test_override_wins_over_overdue(self, requirement, stages):
+        # 系统逾期按自动口径应 delayed；手动覆盖 in_progress 胜出
+        get_stage(stages, StageType.RESEARCH).planned_end = d(-1)
+        requirement.manual_status = "in_progress"
+        assert recalc_status(requirement, stages, NOW) == "in_progress"
+
+    async def test_override_done_survives_overdue(self, requirement, stages):
+        get_stage(stages, StageType.RESEARCH).planned_end = d(-1)
+        requirement.manual_status = "done"
+        assert recalc_status(requirement, stages, NOW) == "done"
+
+    async def test_apply_status_respects_override(self, requirement):
+        # 无覆盖：apply_status 正常写
+        apply_status(requirement, "done")
+        assert requirement.status == "done"
+        # 有覆盖：apply_status 不改写 status
+        requirement.manual_status = "delayed"
+        requirement.status = "delayed"
+        apply_status(requirement, "done")
+        assert requirement.status == "delayed"
+
+    async def test_clear_override_recalcs(self, requirement, stages):
+        # 覆盖为 delayed，清空后按环节重算回 not_started
+        requirement.manual_status = "delayed"
+        requirement.status = "delayed"
+        requirement.manual_status = None
+        assert recalc_status(requirement, stages, NOW) == "not_started"
+
+    async def test_pause_does_not_change_status_under_override(self, requirement, stages):
+        # 手动覆盖 paused 之外的状态时，pause 不应改写 status（但顺延字段仍记录）
+        requirement.manual_status = "in_progress"
+        requirement.status = "in_progress"
+        pause(requirement, NOW)
+        assert requirement.status == "in_progress"  # 覆盖冻结
+        assert requirement.paused_from == "in_progress"  # 顺延字段照记
+        assert requirement.paused_at == NOW
 
 
 # ------------------------------------------------------------- start / complete

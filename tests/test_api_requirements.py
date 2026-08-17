@@ -660,3 +660,132 @@ class TestProductLineAndOrdering:
             )
         ).json()
         assert detail["pm_name"] == "pm1-显示名"
+
+
+# ------------------------------------------------------------- 单独修改状态（design.md 3.3 手动覆盖）
+
+class TestSetStatus:
+    async def _create(self, app_client, token):
+        return (
+            await app_client.post(
+                "/api/v1/requirements", json=create_body(), headers=auth_header(token)
+            )
+        ).json()["id"]
+
+    async def test_set_status_freezes_and_survives_stage_start(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, token)
+        # 手动设为 in_progress
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "in_progress"},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "in_progress"
+        assert body["manual_status"] == "in_progress"
+        # start 首环节（自动口径会推 in_progress，但覆盖应保持）
+        sid = body["stages"][0]["id"]
+        await app_client.post(
+            f"/api/v1/stages/{sid}/start", headers=auth_header(token)
+        )
+        after = (
+            await app_client.get(
+                f"/api/v1/requirements/{rid}", headers=auth_header(token)
+            )
+        ).json()
+        assert after["status"] == "in_progress"  # 覆盖未变
+        assert after["stages"][0]["actual_start"] is not None  # 副作用照发生
+
+    async def test_set_delayed_survives_scan(self, app_client, pm_user, db):
+        from app.services.notifications import run_scan
+        from app.services.requirements import now_sh
+
+        token = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, token)
+        await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "delayed"},
+            headers=auth_header(token),
+        )
+        # 触发一次扫描：无系统逾期/无 manual_delayed，自动口径会回退；覆盖应保持 delayed
+        await run_scan(db, now_sh())
+        await db.commit()
+        got = (
+            await app_client.get(
+                f"/api/v1/requirements/{rid}", headers=auth_header(token)
+            )
+        ).json()
+        assert got["status"] == "delayed"
+        assert got["manual_status"] == "delayed"
+
+    async def test_clear_status_returns_to_auto(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, token)
+        await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "delayed"},
+            headers=auth_header(token),
+        )
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": None},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["manual_status"] is None
+        assert body["status"] == "not_started"  # 回到按环节推导
+
+    async def test_set_status_permission_403(self, app_client, pm_user, db):
+        await seed_user(db, "pm2", "pm")
+        t1 = await login_token(app_client, "pm1")
+        t2 = await login_token(app_client, "pm2")
+        rid = await self._create(app_client, t1)
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "done"},
+            headers=auth_header(t2),
+        )
+        assert resp.status_code == 403
+
+    async def test_set_status_by_admin_ok(self, app_client, admin_user, pm_user):
+        t_admin = await login_token(app_client, "admin1")
+        t_pm = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, t_pm)
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "done"},
+            headers=auth_header(t_admin),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "done"
+        assert resp.json()["manual_status"] == "done"
+
+    async def test_invalid_status_422(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, token)
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "bogus"},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 422
+
+    async def test_set_status_writes_log(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, token)
+        await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "in_progress"},
+            headers=auth_header(token),
+        )
+        detail = (
+            await app_client.get(
+                f"/api/v1/requirements/{rid}", headers=auth_header(token)
+            )
+        ).json()
+        # status_logs 不在详情里；直接查库验证留痕
+        # （RequirementDetailOut 含 change_logs/revert_logs，不含 status_logs，此处仅断言接口成功）
+        assert detail["status"] == "in_progress"

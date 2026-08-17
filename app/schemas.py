@@ -7,7 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.enums import PRODUCT_LINES, REQ_CATEGORIES, UserRole
+from app.enums import PRODUCT_LINES, REQ_CATEGORIES, RequirementStatus, UserRole
 
 
 # ---------------------------------------------------------------- 认证
@@ -161,6 +161,16 @@ class RequirementUpdate(ProductLineMixin):
     stage_assignees: list[StageAssigneeItem] | None = None
 
 
+class RequirementStatusUpdate(BaseModel):
+    """单独修改需求状态（design.md 3.3 手动状态覆盖）。
+
+    status 为枚举值 → 写入 manual_status 覆盖位并冻结；
+    status 为 None → 清除覆盖位，回到状态机自动重算。
+    """
+
+    status: RequirementStatus | None = None
+
+
 class ReasonIn(BaseModel):
     """暂停/恢复/标记延期等需填原因的操作。"""
 
@@ -220,6 +230,7 @@ class RequirementOut(BaseModel):
     source: str | None
     priority: str
     status: str
+    manual_status: str | None = None  # 手动覆盖位（design.md 3.3）；None=自动
     manual_delayed: bool
     manual_delay_reason: str | None
     responsible_pm_id: int

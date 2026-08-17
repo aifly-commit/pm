@@ -83,6 +83,8 @@ class Requirement(Base):
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"))
     paused_from: Mapped[Optional[str]] = mapped_column(String(16))
     paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    # 手动状态覆盖位：非空时冻结 status，不受 recalc/扫描/环节流转影响（design.md 3.3）
+    manual_status: Mapped[Optional[str]] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
