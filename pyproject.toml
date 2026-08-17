@@ -26,6 +26,15 @@ dev = [
     "httpx",
 ]
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+# 显式声明可导入包：仅 app（alembic/frontend 是配置/资源目录，非 Python 包），
+# 避免 setuptools flat-layout 自动发现多顶层包而拒绝构建。
+[tool.setuptools]
+packages = ["app"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
