@@ -174,7 +174,7 @@ async def _scan_one_stage(
         title = f"【环节逾期】需求「{requirement.title}」{label}已逾期"
         content = (
             f"需求「{requirement.title}」的「{label}」环节已逾期"
-            f"{_format_overdue_days(days)}（预计结束 {stage.planned_end:%Y-%m-%d %H:%M}）。"
+            f"{_format_overdue_days(days)}（预计结束 {stage.planned_end:%Y-%m-%d}）。"
         )
         report.overdue_notifications += await create_notification(
             session,
@@ -194,7 +194,7 @@ async def _scan_one_stage(
         title = f"【临期提醒】需求「{requirement.title}」{label}即将到期"
         content = (
             f"需求「{requirement.title}」的「{label}」环节预计于 "
-            f"{stage.planned_end:%Y-%m-%d %H:%M} 结束，请关注进度。"
+            f"{stage.planned_end:%Y-%m-%d} 结束，请关注进度。"
         )
         created = await create_notification(
             session,
@@ -235,7 +235,7 @@ async def _scan_start_soon(
         ntype=TYPE_START_SOON,
         title=title,
         content=f"需求「{requirement.title}」的「{label}」环节计划于 "
-        f"{stage.planned_start:%Y-%m-%d %H:%M} 开始。",
+        f"{stage.planned_start:%Y-%m-%d} 开始。",
         requirement_id=requirement.id,
         stage_id=stage.id,
         dedupe=True,
@@ -246,7 +246,8 @@ async def _scan_start_soon(
 async def run_scan(session: AsyncSession, now: datetime | None = None) -> ScanReport:
     """执行一次全量扫描：生成通知 + 兜底刷新需求状态（design.md 4.2）。
 
-    排除：需求状态为 paused / done；环节已 done；planned_end 为 NULL。
+    排除：真正处于暂停时钟中的需求（paused_at 非空）、已完成环节；
+    planned_end 为 NULL 的环节。manual_status 只覆盖展示状态，不中断环节提醒。
     """
     now = now or now_sh()
     report = ScanReport()
@@ -257,7 +258,7 @@ async def run_scan(session: AsyncSession, now: datetime | None = None) -> ScanRe
                 select(Requirement, RequirementStage)
                 .join(RequirementStage, RequirementStage.requirement_id == Requirement.id)
                 .where(
-                    Requirement.status.notin_(("paused", "done")),
+                    Requirement.paused_at.is_(None),
                     RequirementStage.status != StageStatus.DONE.value,
                 )
             )

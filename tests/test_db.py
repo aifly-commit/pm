@@ -33,5 +33,6 @@ def test_base_is_declarative():
     expected = {
         "users", "projects", "requirements", "requirement_stages",
         "stage_time_change_logs", "stage_revert_logs", "notifications",
+        "requirement_modification_logs",
     }
     assert expected.issubset(set(Base.metadata.tables.keys()))

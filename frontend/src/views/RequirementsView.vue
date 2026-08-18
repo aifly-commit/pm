@@ -2,8 +2,9 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Filter } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { REQ_STATUSES, STAGE_TYPES, PRODUCT_LINES, REQ_CATEGORIES, statusMeta, fmtMonth } from '../format'
+import { REQ_STATUSES, STAGE_TYPES, PRODUCT_LINES, REQ_CATEGORIES, statusMeta, fmtTime } from '../format'
 
 const router = useRouter()
 const loading = ref(false)
@@ -13,6 +14,9 @@ const filters = reactive({
   status: '',
   stage_type: '',
   product_line: '',
+  category: '',
+  priority: '',
+  pm_id: null,
   keyword: '',
   page: 1,
   page_size: 20,
@@ -43,7 +47,7 @@ async function load() {
   loading.value = true
   try {
     const params = {}
-    for (const k of ['status', 'stage_type', 'product_line', 'keyword', 'page', 'page_size'])
+    for (const k of ['status', 'stage_type', 'product_line', 'category', 'priority', 'pm_id', 'keyword', 'page', 'page_size'])
       if (filters[k] !== '' && filters[k] != null) params[k] = filters[k]
     const data = await api.get('/requirements?' + new URLSearchParams(params))
     rows.value = data.items
@@ -60,8 +64,22 @@ function search() {
   load()
 }
 
+function applySelectFilter(key, value) {
+  // 不依赖 Popover 内部组件的 change 冒泡；值一更新就明确发起一次查询。
+  filters[key] = value ?? ''
+  search()
+}
+
+function applyKeywordFilter() {
+  search()
+}
+
 async function openCreate() {
   createVisible.value = true
+  await loadUsers()
+}
+
+async function loadUsers() {
   if (!users.value.length) {
     try {
       users.value = await api.get('/users/directory')
@@ -71,15 +89,20 @@ async function openCreate() {
   }
 }
 
-// 月份 → 后端 datetime：开始取当月 1 日 00:00，结束取当月最后一日 23:59:59
-function monthStart(m) {
-  return m ? `${m}-01T00:00:00+08:00` : null
+function normalizeDate(value) {
+  const day = String(value || '').trim().replaceAll('/', '-')
+  if (!day) return null
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return undefined
+  const parsed = new Date(`${day}T00:00:00Z`)
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== day
+    ? undefined
+    : day
 }
-function monthEnd(m) {
-  if (!m) return null
-  const [y, mo] = m.split('-').map(Number)
-  const last = new Date(y, mo, 0).getDate()
-  return `${m}-${String(last).padStart(2, '0')}T23:59:59+08:00`
+
+function toApiDate(value, isEnd = false) {
+  const day = normalizeDate(value)
+  if (!day) return null
+  return `${day}T${isEnd ? '23:59:59' : '00:00:00'}+08:00`
 }
 
 async function submitCreate() {
@@ -92,8 +115,13 @@ async function submitCreate() {
     ElMessage.warning('请选择产品线')
     return
   }
-  if (!createForm.planned_release) {
-    ElMessage.warning('请选择预计上线时间')
+  if (!normalizeDate(createForm.planned_release)) {
+    ElMessage.warning('请填写有效的预计上线日期，例如 2026-08-18')
+    return
+  }
+  const stageDateValues = createForm.stages.flatMap((stage) => [stage.planned_start, stage.planned_end])
+  if (stageDateValues.some((value) => value && !normalizeDate(value))) {
+    ElMessage.warning('环节日期请输入有效格式，例如 2026-08-18')
     return
   }
   creating.value = true
@@ -102,19 +130,19 @@ async function submitCreate() {
       .filter((s) => s.planned_start || s.planned_end)
       .map((s) => ({
         stage_type: s.stage_type,
-        planned_start: monthStart(s.planned_start),
-        planned_end: monthEnd(s.planned_end),
+        planned_start: toApiDate(s.planned_start),
+        planned_end: toApiDate(s.planned_end, true),
         assignee_id: s.assignee_id,
       }))
     // 预计上线时间 = release 环节 planned_end（若表格中未单独填 release 行则注入）
     const releaseRow = stages.find((s) => s.stage_type === 'release')
     if (releaseRow) {
-      releaseRow.planned_end = monthEnd(createForm.planned_release)
+      releaseRow.planned_end = toApiDate(createForm.planned_release, true)
     } else {
       stages.push({
         stage_type: 'release',
         planned_start: null,
-        planned_end: monthEnd(createForm.planned_release),
+        planned_end: toApiDate(createForm.planned_release, true),
         assignee_id: null,
       })
     }
@@ -149,80 +177,86 @@ async function submitCreate() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadUsers()
+})
 </script>
 
 <template>
   <div class="page">
     <div class="page-header">
-      <div>
+      <div class="page-heading">
         <h2 class="page-title">需求管理</h2>
         <p class="page-sub">全流程跟踪：调研 → 审评 → 开发 → 测试 → 上线</p>
       </div>
       <el-button type="primary" @click="openCreate">+ 新建需求</el-button>
     </div>
 
-    <el-card shadow="never" class="filter-card">
-      <div class="toolbar">
-        <el-select v-model="filters.status" placeholder="状态" clearable style="width: 120px" @change="search">
-          <el-option v-for="s in REQ_STATUSES" :key="s.value" :label="s.label" :value="s.value" />
-        </el-select>
-        <el-select v-model="filters.stage_type" placeholder="当前环节" clearable style="width: 120px" @change="search">
-          <el-option v-for="s in STAGE_TYPES" :key="s.value" :label="s.label" :value="s.value" />
-        </el-select>
-        <el-select v-model="filters.product_line" placeholder="产品线" clearable style="width: 150px" @change="search">
-          <el-option v-for="p in PRODUCT_LINES" :key="p" :label="p" :value="p" />
-        </el-select>
-        <el-input
-          v-model="filters.keyword"
-          placeholder="标题关键词"
-          style="width: 200px"
-          clearable
-          @keyup.enter="search"
-          @clear="search"
-        />
-        <el-button type="primary" plain @click="search">查询</el-button>
-      </div>
-    </el-card>
-
     <el-card shadow="never" class="table-card">
+      <div class="table-heading">
+        <div><strong>需求清单</strong><span>点击行可查看完整流转记录</span></div>
+        <span class="table-total">共 {{ total }} 条</span>
+      </div>
       <el-table :data="rows" v-loading="loading" @row-click="(r) => router.push(`/requirements/${r.id}`)" style="cursor: pointer">
         <el-table-column prop="id" label="序号" width="70" />
-        <el-table-column prop="product_line" label="产品线" width="120">
+        <el-table-column prop="product_line" width="120">
+          <template #header>
+            <div class="table-filter-header"><span>产品线</span><el-popover placement="bottom-start" :width="190" trigger="click"><template #reference><button class="header-filter-button" :class="{ active: filters.product_line }" title="筛选产品线"><el-icon><Filter /></el-icon></button></template><el-select :model-value="filters.product_line" placeholder="全部产品线" clearable style="width: 100%" @update:model-value="(value) => applySelectFilter('product_line', value)"><el-option v-for="p in PRODUCT_LINES" :key="p" :label="p" :value="p" /></el-select></el-popover></div>
+          </template>
           <template #default="{ row }">
             <el-tag v-if="row.product_line" effect="plain" round>{{ row.product_line }}</el-tag>
             <span v-else>—</span>
           </template>
         </el-table-column>
-        <el-table-column prop="category" label="需求分类" width="100">
+        <el-table-column prop="category" width="108">
+          <template #header>
+            <div class="table-filter-header"><span>需求分类</span><el-popover placement="bottom-start" :width="190" trigger="click"><template #reference><button class="header-filter-button" :class="{ active: filters.category }" title="筛选需求分类"><el-icon><Filter /></el-icon></button></template><el-select :model-value="filters.category" placeholder="全部分类" clearable style="width: 100%" @update:model-value="(value) => applySelectFilter('category', value)"><el-option v-for="c in REQ_CATEGORIES" :key="c" :label="c" :value="c" /></el-select></el-popover></div>
+          </template>
           <template #default="{ row }">{{ row.category || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="title" label="需求名称" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="title" min-width="180" show-overflow-tooltip>
+          <template #header>
+            <div class="table-filter-header"><span>需求名称</span><el-popover placement="bottom-start" :width="220" trigger="click"><template #reference><button class="header-filter-button" :class="{ active: filters.keyword }" title="按需求名称筛选"><el-icon><Filter /></el-icon></button></template><el-input v-model="filters.keyword" placeholder="输入名称关键词" clearable @keyup.enter="applyKeywordFilter" @clear="applyKeywordFilter" /></el-popover></div>
+          </template>
+        </el-table-column>
         <el-table-column prop="source" label="需求来源" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ row.source || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="priority" label="优先级" width="80">
+        <el-table-column prop="priority" width="88">
+          <template #header>
+            <div class="table-filter-header"><span>优先级</span><el-popover placement="bottom-start" :width="150" trigger="click"><template #reference><button class="header-filter-button" :class="{ active: filters.priority }" title="筛选优先级"><el-icon><Filter /></el-icon></button></template><el-select :model-value="filters.priority" placeholder="全部优先级" clearable style="width: 100%" @update:model-value="(value) => applySelectFilter('priority', value)"><el-option v-for="p in ['P0', 'P1', 'P2', 'P3']" :key="p" :label="p" :value="p" /></el-select></el-popover></div>
+          </template>
           <template #default="{ row }">
             <el-tag :type="row.priority === 'P0' ? 'danger' : row.priority === 'P1' ? 'warning' : 'info'" effect="plain">
               {{ row.priority }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="current_stage" label="当前环节" width="110">
+        <el-table-column prop="current_stage" width="118">
+          <template #header>
+            <div class="table-filter-header"><span>当前环节</span><el-popover placement="bottom-start" :width="180" trigger="click"><template #reference><button class="header-filter-button" :class="{ active: filters.stage_type }" title="筛选当前环节"><el-icon><Filter /></el-icon></button></template><el-select :model-value="filters.stage_type" placeholder="全部环节" clearable style="width: 100%" @update:model-value="(value) => applySelectFilter('stage_type', value)"><el-option v-for="s in STAGE_TYPES" :key="s.value" :label="s.label" :value="s.value" /></el-select></el-popover></div>
+          </template>
           <template #default="{ row }">{{ row.current_stage || '—' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column width="98">
+          <template #header>
+            <div class="table-filter-header"><span>状态</span><el-popover placement="bottom-start" :width="160" trigger="click"><template #reference><button class="header-filter-button" :class="{ active: filters.status }" title="筛选状态"><el-icon><Filter /></el-icon></button></template><el-select :model-value="filters.status" placeholder="全部状态" clearable style="width: 100%" @update:model-value="(value) => applySelectFilter('status', value)"><el-option v-for="s in REQ_STATUSES" :key="s.value" :label="s.label" :value="s.value" /></el-select></el-popover></div>
+          </template>
           <template #default="{ row }">
             <el-tag :type="statusMeta(REQ_STATUSES, row.status).type" effect="dark" round>
               {{ statusMeta(REQ_STATUSES, row.status).label }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="负责人" width="90">
+        <el-table-column width="108">
+          <template #header>
+            <div class="table-filter-header"><span>负责人</span><el-popover placement="bottom-start" :width="190" trigger="click"><template #reference><button class="header-filter-button" :class="{ active: filters.pm_id }" title="筛选负责人"><el-icon><Filter /></el-icon></button></template><el-select :model-value="filters.pm_id" placeholder="全部负责人" clearable style="width: 100%" @update:model-value="(value) => applySelectFilter('pm_id', value)"><el-option v-for="u in users" :key="u.id" :label="u.display_name" :value="u.id" /></el-select></el-popover></div>
+          </template>
           <template #default="{ row }">{{ row.pm_name || `#${row.responsible_pm_id}` }}</template>
         </el-table-column>
-        <el-table-column label="预计上线" width="100">
-          <template #default="{ row }">{{ fmtMonth(row.planned_release) }}</template>
+        <el-table-column label="预计上线" width="126">
+          <template #default="{ row }"><span class="release-date">{{ fmtTime(row.planned_release) }}</span></template>
         </el-table-column>
       </el-table>
 
@@ -253,7 +287,7 @@ onMounted(load)
           </el-col>
           <el-col :span="12">
             <el-form-item label="预计上线" required>
-              <el-date-picker v-model="createForm.planned_release" type="month" value-format="YYYY-MM" placeholder="选择年月（必填）" style="width: 100%" />
+              <el-input v-model="createForm.planned_release" maxlength="10" placeholder="YYYY-MM-DD（必填）" inputmode="numeric" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -281,17 +315,17 @@ onMounted(load)
             </el-form-item>
           </el-col>
         </el-row>
-        <el-divider content-position="left">环节排期（按月填写，可留空；同月相邻环节视为合理衔接）</el-divider>
+        <el-divider content-position="left">环节排期（支持手动填写 YYYY-MM-DD，可留空）</el-divider>
         <el-table :data="createForm.stages" size="small">
           <el-table-column prop="label" label="环节" width="100" />
-          <el-table-column label="预计开始（年月）">
+          <el-table-column label="预计开始日期">
             <template #default="{ row }">
-              <el-date-picker v-model="row.planned_start" type="month" value-format="YYYY-MM" placeholder="如 2026-09" style="width: 100%" />
+              <el-input v-model="row.planned_start" maxlength="10" placeholder="YYYY-MM-DD" inputmode="numeric" />
             </template>
           </el-table-column>
-          <el-table-column label="预计结束（年月）">
+          <el-table-column label="预计结束日期">
             <template #default="{ row }">
-              <el-date-picker v-model="row.planned_end" type="month" value-format="YYYY-MM" placeholder="如 2026-09" style="width: 100%" />
+              <el-input v-model="row.planned_end" maxlength="10" placeholder="YYYY-MM-DD" inputmode="numeric" />
             </template>
           </el-table-column>
           <el-table-column label="负责人">
@@ -312,20 +346,24 @@ onMounted(load)
 </template>
 
 <style scoped>
-.filter-card {
-  margin-bottom: 14px;
-}
-
-.filter-card :deep(.el-card__body) {
-  padding: 14px 20px;
-}
-
 .table-card :deep(.el-card__body) {
-  padding: 8px 12px 16px;
+  padding: 0 12px 16px;
 }
+
+.table-heading span { color: var(--pm-text-sub); font-size: 12px; }
+.table-heading { display: flex; justify-content: space-between; align-items: center; padding: 17px 8px 11px; }
+.table-heading strong { color: #34415f; font-size: 15px; margin-right: 10px; }
+.table-total { padding: 4px 9px; border-radius: 999px; background: #f0f3fa; }
+.table-filter-header { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.header-filter-button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #8490a9; cursor: pointer; }
+.header-filter-button:hover, .header-filter-button.active { background: #e9edff; color: var(--pm-primary); }
+.release-date { display: inline-block; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
 }
 </style>

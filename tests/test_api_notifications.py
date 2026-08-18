@@ -38,6 +38,7 @@ class TestNotificationAPI:
         body = resp.json()
         assert body["total"] == 2
         assert all(i["title"].startswith("通知") for i in body["items"])
+        assert body["items"][0]["created_at"] == "2026-08-14"
 
     async def test_unread_only_filter(self, app_client, pm_user, db):
         await seed_notifications(db, pm_user.id, 3)  # 1 已读 + 2 未读

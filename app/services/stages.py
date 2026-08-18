@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.enums import StageStatus, StageType
 from app.models import (
     Requirement,
+    RequirementModificationLog,
     RequirementStage,
     RequirementStatusLog,
     StageRevertLog,
@@ -244,7 +245,17 @@ async def update_stage_assignee(
     assert_requirement_write(user, requirement)
     if assignee_id is not None and await session.get(User, assignee_id) is None:
         raise RequirementError(f"用户 {assignee_id} 不存在", status=404)
-    stage.assignee_id = assignee_id
+    if stage.assignee_id != assignee_id:
+        session.add(
+            RequirementModificationLog(
+                requirement_id=requirement.id,
+                changed_by=user.id,
+                field=f"stage_assignee:{stage.stage_type}",
+                old_value=None if stage.assignee_id is None else str(stage.assignee_id),
+                new_value=None if assignee_id is None else str(assignee_id),
+            )
+        )
+        stage.assignee_id = assignee_id
     await _load_and_touch(session, requirement)
     return stage
 

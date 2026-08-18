@@ -5,10 +5,11 @@ import { api, getStoredUser } from '../api'
 import {
   REQ_STATUSES,
   STAGE_STATUSES,
+  PRODUCT_LINES,
+  REQ_CATEGORIES,
   statusMeta,
   stageLabel,
   fmtTime,
-  fmtDate,
 } from '../format'
 
 const props = defineProps({ id: { type: String, required: true } })
@@ -18,6 +19,8 @@ const detail = ref(null)
 const loading = ref(false)
 const users = ref([])
 const me = ref(getStoredUser())
+const statusUpdating = ref(false)
+const AUTO_STATUS = '__auto__'
 
 // 允许的回退路径（design.md 3.1）
 const REVERT_TARGETS = {
@@ -86,29 +89,112 @@ async function unmarkDelayed() {
   op(() => api.post(`/requirements/${detail.value.id}/unmark-delayed`, { reason }), '已解除人工延期')
 }
 
-// 改期对话框
-const planVisible = ref(false)
-const planStage = ref(null)
-const planForm = ref({ planned_start: '', planned_end: '' })
-
-function openPlan(stage) {
-  planStage.value = stage
-  planForm.value = {
-    planned_start: (stage.planned_start || '').slice(0, 10),
-    planned_end: (stage.planned_end || '').slice(0, 10),
+async function updateRequirementStatus(value) {
+  const status = value === AUTO_STATUS ? null : value
+  if (status === detail.value.manual_status || statusUpdating.value) return
+  statusUpdating.value = true
+  try {
+    await api.patch(`/requirements/${detail.value.id}/status`, { status })
+    ElMessage.success(status === null ? '已恢复按环节自动计算状态' : '需求状态已更新')
+    await load()
+    emit('notification-may-change')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    statusUpdating.value = false
   }
-  planVisible.value = true
 }
 
-async function submitPlan() {
-  const reason = await askReason('修改预估时间的原因（延期原因必填）')
-  const body = {}
-  // 日期型选择：开始取当日 00:00，结束取当日 23:59:59
-  if (planForm.value.planned_start) body.planned_start = `${planForm.value.planned_start}T00:00:00+08:00`
-  if (planForm.value.planned_end) body.planned_end = `${planForm.value.planned_end}T23:59:59+08:00`
-  body.reason = reason
-  planVisible.value = false
-  op(() => api.patch(`/stages/${planStage.value.id}/plan`, body), '预估时间已更新（写入变更历史）')
+// 需求明细编辑
+const editVisible = ref(false)
+const editForm = ref({})
+
+function openEdit() {
+  editForm.value = {
+    title: detail.value.title,
+    product_line: detail.value.product_line,
+    category: detail.value.category,
+    source: detail.value.source || '',
+    priority: detail.value.priority,
+    description: detail.value.description || '',
+    remark: detail.value.remark || '',
+  }
+  editVisible.value = true
+}
+
+async function submitEdit() {
+  if (!editForm.value.title?.trim()) {
+    ElMessage.warning('请填写需求名称')
+    return
+  }
+  editVisible.value = false
+  op(
+    () => api.patch(`/requirements/${detail.value.id}`, {
+      ...editForm.value,
+      title: editForm.value.title.trim(),
+      description: editForm.value.description || null,
+      source: editForm.value.source || null,
+      remark: editForm.value.remark || null,
+    }),
+    '需求明细已更新',
+  )
+}
+
+function stageTimeText(value) {
+  return value ? fmtTime(value) : ''
+}
+
+function normalizeStageTime(value, field) {
+  const raw = String(value || '').trim().replaceAll('/', '-')
+  if (!raw) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return `${raw}T${field === 'planned_start' ? '00:00:00' : '23:59:59'}+08:00`
+  }
+  return undefined
+}
+
+async function updateStageTime(stage, field, value) {
+  const normalized = normalizeStageTime(value, field)
+  if (!normalized) {
+    ElMessage.warning('请输入有效日期，例如 2026-08-18')
+    return
+  }
+  if (stage[field] === normalized) return
+  try {
+    const reason = await askReason('修改环节时间的原因（必填）')
+    const body = { reason }
+    body[field] = normalized
+    await op(
+      () => api.patch(`/stages/${stage.id}/plan`, body),
+      '环节时间已更新',
+    )
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e.message || '操作已取消')
+  }
+}
+
+const fieldLabel = {
+  title: '需求名称', description: '需求描述', remark: '备注', product_line: '产品线',
+  category: '需求分类', source: '需求来源', priority: '优先级', project_id: '所属项目',
+  responsible_pm_id: '负责 PM', status: '需求状态',
+}
+
+function modificationText(log) {
+  if (log.change_type === 'stage_time') {
+    const [stage, field] = log.field.split(':')
+    return `${stageLabel(stage)} ${field === 'planned_start' ? '开始日期' : '结束日期'}`
+  }
+  if (log.change_type === 'revert') return '环节回退'
+  if (log.field.startsWith('stage_assignee:')) return `${stageLabel(log.field.split(':')[1])}负责人`
+  return fieldLabel[log.field] || log.field
+}
+
+function modificationValue(log, value) {
+  if (value === null || value === '') return '（空）'
+  if (log.change_type === 'stage_time') return fmtTime(value)
+  if (log.change_type === 'revert') return stageLabel(value)
+  if (log.change_type === 'status') return statusMeta(REQ_STATUSES, value).label
+  return value
 }
 
 // 回退对话框
@@ -175,15 +261,33 @@ onMounted(async () => {
               <el-tag v-if="detail.manual_delayed" type="danger" effect="plain" round>人工标记延期</el-tag>
             </div>
             <div class="head-meta">
-              <span v-if="detail.product_line">产品线 {{ detail.product_line }}</span>
+              <span v-if="detail.product_line">{{ detail.product_line }}</span>
+              <span>{{ detail.category || '未分类' }}</span>
               <span>优先级 {{ detail.priority }}</span>
-              <span>负责 PM {{ detail.pm_name || `#${detail.responsible_pm_id}` }}</span>
-              <span>所属项目 {{ detail.project_id ?? '—' }}</span>
-              <span>当前环节 {{ detail.current_stage || '—' }}</span>
+              <span>负责人 {{ detail.pm_name || `#${detail.responsible_pm_id}` }}</span>
+              <span>当前 {{ detail.current_stage || '—' }}</span>
             </div>
-            <div v-if="detail.description" class="head-desc">{{ detail.description }}</div>
+            <div class="detail-focus">
+              <div class="detail-focus-label">需求明细</div>
+              <div class="head-desc" :class="{ muted: !detail.description }">
+                {{ detail.description || '暂未填写需求描述' }}
+              </div>
+              <div v-if="detail.remark" class="head-remark"><span>备注</span>{{ detail.remark }}</div>
+            </div>
           </div>
           <div v-if="canWrite" class="head-actions">
+            <el-button size="small" type="primary" @click="openEdit">编辑明细</el-button>
+            <el-select
+              class="status-select"
+              :model-value="detail.manual_status ?? AUTO_STATUS"
+              :disabled="statusUpdating"
+              size="small"
+              aria-label="修改需求状态"
+              @change="updateRequirementStatus"
+            >
+              <el-option label="状态：自动计算" :value="AUTO_STATUS" />
+              <el-option v-for="item in REQ_STATUSES" :key="item.value" :label="`状态：${item.label}`" :value="item.value" />
+            </el-select>
             <el-button v-if="!['paused', 'done'].includes(detail.status)" size="small" @click="pause">暂停</el-button>
             <el-button v-if="detail.status === 'paused'" size="small" type="warning" @click="resume">恢复（顺延排期）</el-button>
             <el-button v-if="detail.manual_delayed" size="small" type="danger" plain @click="unmarkDelayed">解除人工延期</el-button>
@@ -192,30 +296,45 @@ onMounted(async () => {
         </div>
       </el-card>
 
-      <el-card shadow="never" class="block">
-        <template #header><span class="card-title">环节时间线</span></template>
-        <el-table :data="detail?.stages || []" size="default">
-          <el-table-column label="环节" width="110">
-            <template #default="{ row }">{{ stageLabel(row.stage_type) }}</template>
+      <el-card shadow="never" class="block stage-card">
+        <template #header>
+          <div class="section-head">
+            <div><span class="card-title">环节安排</span><span class="section-subtitle">点击时间可直接调整计划</span></div>
+            <span class="stage-count">{{ detail.stages.length }} 个环节</span>
+          </div>
+        </template>
+        <el-table :data="detail?.stages || []" size="small" class="compact-stage-table">
+          <el-table-column label="环节" width="120">
+            <template #default="{ row, $index }"><span class="stage-index">{{ String($index + 1).padStart(2, '0') }}</span>{{ stageLabel(row.stage_type) }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="100">
+          <el-table-column label="状态" width="94">
             <template #default="{ row }">
               <el-tag :type="statusMeta(STAGE_STATUSES, row.status).type" size="small" round>
                 {{ statusMeta(STAGE_STATUSES, row.status).label }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="预计" width="240">
+          <el-table-column label="日期" min-width="255">
             <template #default="{ row }">
-              {{ fmtDate(row.planned_start) }} → {{ fmtDate(row.planned_end) }}
+              <div v-if="canWrite && row.status !== 'done'" class="stage-time-inputs">
+                <el-input
+                  :model-value="stageTimeText(row.planned_start)"
+                  placeholder="开始日期"
+                  class="stage-date-picker"
+                  @change="(value) => updateStageTime(row, 'planned_start', value)"
+                />
+                <span>至</span>
+                <el-input
+                  :model-value="stageTimeText(row.planned_end)"
+                  placeholder="结束日期"
+                  class="stage-date-picker"
+                  @change="(value) => updateStageTime(row, 'planned_end', value)"
+                />
+              </div>
+              <span v-else>{{ fmtTime(row.planned_start) }} → {{ fmtTime(row.planned_end) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="实际" width="300">
-            <template #default="{ row }">
-              {{ fmtTime(row.actual_start) }} → {{ fmtTime(row.actual_end) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="负责人" width="150">
+          <el-table-column label="负责人" width="135">
             <template #default="{ row }">
               <el-select
                 v-if="canWrite && row.status !== 'done'"
@@ -230,12 +349,11 @@ onMounted(async () => {
               <span v-else>{{ users.find((u) => u.id === row.assignee_id)?.display_name || (row.assignee_id ?? '—') }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" min-width="230">
+          <el-table-column label="操作" min-width="160">
             <template #default="{ row }">
               <template v-if="row.status !== 'done'">
                 <el-button v-if="row.status === 'not_started'" size="small" type="primary" @click="startStage(row)">开始</el-button>
                 <el-button v-if="row.status === 'in_progress'" size="small" type="success" @click="completeStage(row)">完成</el-button>
-                <el-button size="small" @click="openPlan(row)">改期</el-button>
                 <el-button v-if="REVERT_TARGETS[row.stage_type]" size="small" type="warning" plain @click="openRevert(row)">回退</el-button>
               </template>
             </template>
@@ -243,50 +361,63 @@ onMounted(async () => {
         </el-table>
       </el-card>
 
-      <el-row :gutter="14" class="block">
-        <el-col :span="detail?.revert_logs?.length ? 12 : 24">
-          <el-card shadow="never">
-            <template #header><span class="card-title">预估时间变更历史</span></template>
-            <el-empty v-if="!detail?.change_logs?.length" description="暂无变更" :image-size="60" />
-            <el-timeline v-else>
-              <el-timeline-item v-for="log in detail.change_logs" :key="log.id" :timestamp="fmtTime(log.created_at)" :type="log.auto_generated ? 'info' : 'primary'">
-                {{ stageLabel(detail.stages.find((s) => s.id === log.stage_id)?.stage_type || '') }}
-                {{ log.field === 'planned_start' ? '预计开始' : '预计结束' }}：
-                {{ fmtTime(log.old_value) }} → {{ fmtTime(log.new_value) }}
-                <el-tag v-if="log.auto_generated" size="small" type="info" style="margin-left: 6px">系统顺延</el-tag>
-                <div class="log-reason">原因：{{ log.reason }}</div>
-              </el-timeline-item>
-            </el-timeline>
-          </el-card>
-        </el-col>
-        <el-col v-if="detail?.revert_logs?.length" :span="12">
-          <el-card shadow="never">
-            <template #header><span class="card-title">回退历史</span></template>
-            <el-timeline>
-              <el-timeline-item v-for="log in detail.revert_logs" :key="log.id" :timestamp="fmtTime(log.created_at)" type="warning">
-                {{ stageLabel(detail.stages.find((s) => s.id === log.from_stage_id)?.stage_type || '') }}
-                →
-                {{ stageLabel(detail.stages.find((s) => s.id === log.to_stage_id)?.stage_type || '') }}
-                <div class="log-reason">原因：{{ log.reason }}</div>
-              </el-timeline-item>
-            </el-timeline>
+      <el-row class="block">
+        <el-col :span="24">
+          <el-card shadow="never" class="log-card">
+            <template #header>
+              <div class="section-head">
+                <div><span class="card-title">需求修改记录</span><span class="section-subtitle">按最新操作倒序展示</span></div>
+                <span class="stage-count">{{ detail.modification_logs?.length || 0 }} 条</span>
+              </div>
+            </template>
+            <el-empty v-if="!detail?.modification_logs?.length" description="暂无修改记录" :image-size="60" />
+            <div v-else class="modification-log-list">
+              <div v-for="log in detail.modification_logs" :key="log.id" class="modification-log-line" :class="{ warning: log.change_type === 'revert' }">
+                <time>{{ fmtTime(log.created_at) }}</time>
+                <span class="log-actor">{{ users.find((u) => u.id === log.changed_by)?.display_name || (log.changed_by ? `#${log.changed_by}` : '系统') }}</span>
+                <strong>{{ modificationText(log) }}</strong>
+                <span class="log-value">{{ modificationValue(log, log.old_value) }} <i>→</i> {{ modificationValue(log, log.new_value) }}</span>
+                <span v-if="log.reason" class="log-reason" :title="log.reason">原因：{{ log.reason }}</span>
+              </div>
+            </div>
           </el-card>
         </el-col>
       </el-row>
     </template>
 
-    <el-dialog v-model="planVisible" :title="`修改预估时间 — ${stageLabel(planStage?.stage_type || '')}`" width="520px">
+    <el-dialog v-model="editVisible" title="编辑需求明细" width="620px">
       <el-form label-width="90px">
-        <el-form-item label="预计开始">
-          <el-date-picker v-model="planForm.planned_start" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+        <el-form-item label="需求名称" required>
+          <el-input v-model="editForm.title" maxlength="200" show-word-limit />
         </el-form-item>
-        <el-form-item label="预计结束">
-          <el-date-picker v-model="planForm.planned_end" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+        <el-form-item label="产品线">
+          <el-select v-model="editForm.product_line" clearable style="width: 100%">
+            <el-option v-for="item in PRODUCT_LINES" :key="item" :label="item" :value="item" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="需求分类">
+          <el-radio-group v-model="editForm.category">
+            <el-radio-button v-for="item in REQ_CATEGORIES" :key="item" :value="item">{{ item }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="优先级">
+          <el-radio-group v-model="editForm.priority">
+            <el-radio-button v-for="item in ['P0', 'P1', 'P2', 'P3']" :key="item" :value="item">{{ item }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="需求来源">
+          <el-input v-model="editForm.source" maxlength="128" show-word-limit />
+        </el-form-item>
+        <el-form-item label="需求描述">
+          <el-input v-model="editForm.description" type="textarea" :rows="3" maxlength="4000" show-word-limit />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="editForm.remark" type="textarea" :rows="3" maxlength="4000" show-word-limit placeholder="填写补充说明、风险或协作备注" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="planVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitPlan">下一步（填原因）</el-button>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitEdit">保存修改</el-button>
       </template>
     </el-dialog>
 
@@ -313,6 +444,9 @@ onMounted(async () => {
 <style scoped>
 .head-card {
   margin-bottom: 14px;
+  overflow: hidden;
+  background: linear-gradient(120deg, #fff 0%, #f5f9ff 100%);
+  border-color: #e6edf7;
 }
 
 .head-row {
@@ -340,39 +474,201 @@ onMounted(async () => {
 }
 
 .title-text {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 750;
+  letter-spacing: -0.35px;
 }
 
 .head-meta {
-  margin-top: 8px;
+  margin-top: 12px;
   display: flex;
-  gap: 18px;
+  gap: 8px;
   flex-wrap: wrap;
   font-size: 13px;
   color: var(--pm-text-sub);
 }
 
+.head-meta span {
+  padding: 4px 9px;
+  border: 1px solid #e4eaf2;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 70%);
+}
+
+.detail-focus {
+  margin-top: 18px;
+  padding: 15px 17px;
+  border-left: 3px solid var(--el-color-primary);
+  border-radius: 0 10px 10px 0;
+  background: rgb(255 255 255 / 76%);
+}
+
+.detail-focus-label {
+  margin-bottom: 7px;
+  color: var(--pm-text-sub);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
 .head-desc {
-  margin-top: 8px;
+  color: #303b4c;
+  font-size: 15px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.head-desc.muted {
+  color: #9ba7b8;
+}
+
+.head-remark {
+  margin-top: 10px;
+  color: var(--pm-text-sub);
   font-size: 13px;
-  color: #4b5668;
   line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.head-remark span {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 6px;
+  color: #6580a3;
+  font-size: 11px;
+  background: #edf4ff;
+  border-radius: 4px;
 }
 
 .head-actions {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.status-select {
+  width: 132px;
 }
 
 .block {
   margin-bottom: 14px;
 }
 
-.log-reason {
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-subtitle {
+  margin-left: 10px;
   color: var(--pm-text-sub);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.stage-count {
+  color: #758399;
+  font-size: 12px;
+}
+
+.stage-card :deep(.el-card__header),
+.log-card :deep(.el-card__header) {
+  padding: 13px 18px;
+}
+
+.stage-index {
+  display: inline-block;
+  width: 24px;
+  color: #a2adbc;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.compact-stage-table :deep(.el-table__cell) {
+  padding: 6px 0;
+}
+
+.compact-stage-table :deep(.el-table__header .el-table__cell) {
+  padding: 8px 0;
+}
+
+.stage-date-picker {
+  width: 108px;
+}
+
+.stage-date-picker :deep(.el-input__inner) {
+  font-size: 12px;
+}
+
+.stage-time-inputs {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #9aa7b7;
+  font-size: 12px;
+}
+
+.modification-log-list {
+  margin: -4px 0;
+}
+
+.modification-log-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 9px;
+  height: 38px;
+  padding: 0 4px;
+  border-bottom: 1px solid #f0f3f7;
+  color: #3e4b5c;
   font-size: 13px;
+  white-space: nowrap;
+}
+
+.modification-log-line:last-child {
+  border-bottom: 0;
+}
+
+.modification-log-line time {
+  flex: 0 0 120px;
+  color: #8b97a8;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-actor {
+  flex: 0 0 64px;
+  overflow: hidden;
+  color: #62748b;
+  text-overflow: ellipsis;
+}
+
+.log-value {
+  overflow: hidden;
+  color: #66758a;
+  text-overflow: ellipsis;
+}
+
+.log-value i {
+  margin: 0 3px;
+  color: #9aa7b7;
+  font-style: normal;
+}
+
+.log-reason {
+  overflow: hidden;
+  min-width: 0;
+  margin-left: auto;
+  color: #8895a6;
+  text-overflow: ellipsis;
+}
+
+.modification-log-line.warning strong {
+  color: #c6842b;
 }
 
 .revert-hint {

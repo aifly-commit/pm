@@ -157,9 +157,9 @@
 - **状态重算在写操作中同步执行**：start / complete / revert / 改期 / 暂停 / 恢复 / 人工标记(解除)延期等操作落库时立即重算需求状态并刷新，**不依赖定时任务**；30 分钟定时任务仅作为兜底（覆盖时间自然流逝导致的逾期）。
 - **暂停的时钟处理**：暂停时记录 `paused_at`，该需求所有未完成环节**冻结逾期判定**（暂停期间不判定逾期、不产生临期/逾期通知）；恢复时对暂停期间的未完成环节的 `planned_start` / `planned_end` **统一顺延** `暂停时长`（自然日口径，写入变更历史，原因自动记录为"需求暂停顺延"，不计入人工"延期调整次数"统计），然后按新时间重新判定状态。
 - **逾期扫描的范围**：需求状态为 done（终态）或 paused（冻结判定）的不参与；**未开始的需求参与**——首个环节即使还没 start，其 planned_end 超期同样判定逾期（排了期不启动也算延期）。
-- **手动状态覆盖（manual_status）**：`requirements.manual_status` 为可选覆盖位。PM/管理员可通过 `PATCH /requirements/{id}/status`（body `{"status": <枚举值>}`）单独修改需求状态，写入 `manual_status` 并冻结：此后所有 recalc（写操作内同步重算、30 分钟兜底扫描）直接返回该覆盖值，**不受环节流转/暂停恢复/改期/人工延期影响**，直到再次手动修改或显式清除（body `{"status": null}` → 清除覆盖位、按环节重算回到自动口径）。设/清均写 `RequirementStatusLog`（操作人留痕）。
+- **手动状态覆盖（manual_status）**：`requirements.manual_status` 为可选覆盖位。PM/管理员可通过 `PATCH /requirements/{id}/status`（body 必须显式包含 `{"status": <枚举值|null>}`）单独修改需求状态，写入 `manual_status` 并冻结：此后所有 recalc（写操作内同步重算、30 分钟兜底扫描）直接返回该覆盖值，**不受环节流转/暂停恢复/改期/人工延期影响**，直到再次手动修改或显式清除（body `{"status": null}` → 清除覆盖位、按环节重算回到自动口径）。设/清均写 `RequirementStatusLog`（操作人留痕）。空对象 `{}` 不代表清除，接口返回 422。
   - 与暂停顺延机制的区别：手动设 `paused` **仅是状态标签**（`paused_from`/`paused_at` 为空，不触发日期顺延）；需要暂停时钟与恢复顺延能力时仍走 `pause` / `resume` 端点。
-  - 手动设 `done` 为终态标签，不影响环节实际时间记录；后续若完成上线环节，`manual_status` 非空时状态不变（覆盖生效）。
+  - 手动设 `done` 为终态标签，不影响环节实际时间记录、也不抑制未完成环节的提醒扫描；后续若完成上线环节，`manual_status` 非空时状态不变（覆盖生效）。手动设 `paused` 同样仅为状态标签，只有经暂停接口写入 `paused_at` 的真实暂停才会停止扫描和计算暂停顺延。
 
 ### 3.4 修改预估时间规则（核心约束）
 
@@ -167,13 +167,17 @@
 2. 每次修改写入 `stage_time_change_logs` 变更历史：操作人、操作时间、修改字段、原值、新值、原因。
 3. 变更历史在需求详情页可见，且纳入周/月统计的"延期调整次数"。
 4. 已完成的环节不允许再修改预估时间。
+5. 详情页以一个可手工录入的“时间”区间字段维护环节计划；提交时仍按开始、结束时间分别校验并留痕。
 
 ### 3.5 需求基础字段
+
+**统一时间口径**：平台所有业务时间（计划、实际、创建、更新、日志与通知）统一按 `YYYY-MM-DD` 获取、传输和展示；服务端内部保留时间边界计算，计划开始按当天 00:00:00、计划结束按当天 23:59:59 处理。
 
 | 字段 | 说明 |
 |---|---|
 | 标题 | 必填 |
 | 描述 | 富文本/Markdown，需求背景与内容 |
+| 备注 | 可空，记录补充说明、风险与协作信息 |
 | 优先级 | P0 / P1 / P2 / P3 |
 | 负责产品经理 | 必填，关联用户 |
 | 关联项目 | 可空，关联项目（一个需求最多属于一个项目） |
@@ -209,7 +213,7 @@
   3. 兜底刷新受影响需求的 `status`（进行中 ↔ 延期）。用户写操作（start/complete/改期等）已在请求内同步刷新状态，本扫描仅覆盖时间自然流逝导致的逾期。
 - **防重复策略**：以 `(stage_id, notification_type, 自然日)` 为去重键——同一环节同一类型的逾期通知每天最多一条；临期通知同一环节只发一次（记录已发标记，改期后重置，见 4.1）。
 - **多 worker 约束**：定时任务随后端进程运行，生产部署**必须 `uvicorn --workers 1`**（或使用 gunicorn 单 worker + uvicorn worker）；若未来需要多 worker，须将调度迁移到独立进程或数据库抢占锁，避免重复扫描与重复通知。
-- **时区约定**：全平台统一使用 **Asia/Shanghai** 时区（服务器时间、数据库 DATETIME、通知去重的"自然日"、统计的自然周/月均按此时区计算）；API 传输时间带时区偏移的 ISO 8601（如 `2026-08-14T10:00:00+08:00`），入库前统一转换为本地-naive 的该时区时间存储。
+- **时区约定**：全平台统一使用 **Asia/Shanghai** 时区（服务器时间、数据库 DATETIME、通知去重的"自然日"、统计的自然周/月均按此时区计算）；API 对外统一传输 `YYYY-MM-DD`，入库时开始日期归一到当天起点、结束日期归一到当天终点。
 - 用户在前端通过轮询（如每 60 秒）或进入页面时拉取未读通知数，第一版不做 WebSocket 推送。
 
 ### 4.3 通知中心
@@ -287,6 +291,7 @@ projects 1 ──── n requirements (project_id)
 requirements 1 ──── 7 requirement_stages
 requirement_stages 1 ──── n stage_time_change_logs
 requirements 1 ──── n stage_revert_logs
+requirements 1 ──── n requirement_modification_logs
 users 1 ──── n notifications
 ```
 
@@ -315,8 +320,8 @@ users 1 ──── n notifications
 | progress_note | TEXT | 人工维护的进展摘要 |
 | progress_percent | INTEGER DEFAULT 0 | 人工维护的进度百分比 0–100 |
 | status | VARCHAR(16) NOT NULL DEFAULT 'not_started' | `not_started`/`in_progress`/`done`/`paused`/`terminated` |
-| planned_start / planned_end | DATE | |
-| actual_start / actual_end | DATE NULL | |
+| planned_start / planned_end | DATETIME | 对外按 YYYY-MM-DD；内部保留日边界 |
+| actual_start / actual_end | DATETIME NULL | 对外按 YYYY-MM-DD |
 | owner_id | INTEGER FK → users.id | 负责人 |
 | created_at / updated_at | DATETIME | |
 
@@ -371,6 +376,19 @@ users 1 ──── n notifications
 
 索引：`(stage_id)`、`(created_at)`（统计用）。
 
+**requirement_modification_logs**（需求明细修改留痕）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | INTEGER PK | |
+| requirement_id | INTEGER FK → requirements.id NOT NULL | |
+| changed_by | INTEGER FK → users.id NULL | 操作人；系统变更可为空 |
+| field | VARCHAR(64) NOT NULL | 修改字段；环节负责人使用 `stage_assignee:<stage_type>` |
+| old_value / new_value | TEXT NULL | 修改前/后的展示值 |
+| created_at | DATETIME | |
+
+索引：`(requirement_id, created_at)`，供详情倒序时间线读取。
+
 **stage_revert_logs**（回退留痕）
 
 | 字段 | 类型 | 说明 |
@@ -421,8 +439,9 @@ users 1 ──── n notifications
 |---|---|---|
 | GET | `/requirements` | 列表，支持 `status`/`stage_type`/`pm_id`/`project_id`/`keyword` 筛选与分页 |
 | POST | `/requirements` | 创建需求（自动生成 7 个环节），body 含各环节预估时间与负责人（可空） |
-| GET | `/requirements/{id}` | 详情：基础信息 + 环节列表 + 变更历史 + 回退历史 |
-| PATCH | `/requirements/{id}` | 编辑基础字段（标题/描述/优先级/关联项目/负责 PM/各环节负责人），负责人变更走此端点 |
+| POST | `/requirements/import` | 批量导入需求，body：`{"items": [<RequirementCreate>, ...]}`，每批 1–100 条；复用创建字段与排期校验，任一条失败整批不导入。PM 仅能导入自己负责的需求，管理员可指定负责 PM。 |
+| GET | `/requirements/{id}` | 详情：基础信息、环节列表及按时间倒排的需求修改记录 |
+| PATCH | `/requirements/{id}` | 编辑基础字段（含备注）与各环节负责人；每项实际变动均写入需求修改记录 |
 | POST | `/requirements/{id}/pause` | 暂停需求（记录 paused_at，见 3.3 暂停时钟规则） |
 | POST | `/requirements/{id}/resume` | 恢复需求（自动顺延未完成环节时间并重算状态） |
 | POST | `/requirements/{id}/mark-delayed` | PM 人工标记延期，body：`{"reason": "..."}`（reason 必填） |
@@ -486,7 +505,7 @@ users 1 ──── n notifications
 ### 8.8 认证与通用约定补充
 
 - **JWT 策略**：access_token 有效期 **12 小时**；第一版**不做 refresh token**，过期后重新登录。token 中含 `user_id` 与 `role`，权限校验在依赖项中统一完成。
-- **时间格式**：ISO 8601 带时区偏移（如 `2026-08-14T10:00:00+08:00`），服务端统一转换 Asia/Shanghai 后存储（见 4.2）。
+- **时间格式**：统一为 `YYYY-MM-DD`；页面与接口均不展示时分秒，服务端按 Asia/Shanghai 的自然日边界存储和计算（见 4.2）。
 - **权限校验失败**统一返回 403；资源不存在返回 404；状态/流程校验失败（如未 start 就 complete、回退目标非法）返回 **409**，`detail` 中给出具体冲突原因。
 
 ---
@@ -500,7 +519,7 @@ users 1 ──── n notifications
 | 登录 | `/login` | |
 | 需求列表 | `/requirements` | 筛选：状态/当前环节/负责人/所属项目/关键词；表格列：标题、优先级、当前环节、状态（延期红标）、负责人、更新时间 |
 | 新建/编辑需求 | `/requirements/new`、`/requirements/{id}/edit` | 表单含 7 个环节的预估时间与负责人 |
-| 需求详情 | `/requirements/{id}` | 上半：基础信息；中部：环节时间线；下半：预估时间变更历史 |
+| 需求详情 | `/requirements/{id}` | 上半：可编辑基础信息与备注；中部：单一时间字段的环节时间线；下半：按时间倒排的需求修改记录 |
 | 项目列表 | `/projects` | 卡片或表格，显示状态、负责人、进度 |
 | 项目详情 | `/projects/{id}` | 项目信息、接口人、进展编辑、对接需求清单 |
 | 统计看板 | `/stats` | Tab 切换：需求（周/月）/ 项目（周/月） |
@@ -521,14 +540,14 @@ users 1 ──── n notifications
 │ ⑥ 测试       ○ 未开始   3/29→4/03                            │
 │ ⑦ 上线       ○ 未开始   4/04→4/04                            │
 ├────────────────────────────────────────────────────────────┤
-│ 预估时间变更历史                                             │
-│ 3/21 李四 平台开发预计结束 3/18→3/20 原因：依赖接口方联调延迟   │
+│ 需求修改记录（按时间倒排）                                   │
+│ 3/21 李四 平台开发结束时间 3/18→3/20 原因：依赖接口方联调延迟   │
 └────────────────────────────────────────────────────────────┘
 ```
 
 交互说明：
 
-- 点击"改期"弹出表单：新预计开始/结束时间 + **延期原因（必填）**。
+- 在环节的单一“时间”字段直接选择或手工输入开始、结束日期；提交后填写**延期原因（必填）**。
 - 环节行内操作（开始/完成/回退）按当前用户权限与环节状态显示。
 - 统计看板用图表库（如 ECharts）渲染柱状图（状态分布）、漏斗/条形（环节在途）、折线（周趋势）。
 
@@ -547,7 +566,7 @@ users 1 ──── n notifications
 
 - 数据量预估：千级需求、万级环节，实时计算统计无性能问题。
 - 备份：每日定时复制 SQLite 文件即可。
-- 审计：预估时间变更、状态变更均有日志，可追溯。
+- 审计：需求明细（含备注）、预估时间、状态与回退均汇总为需求修改记录，可追溯。
 
 ### 10.3 后续可扩展点（第一版不做，预留设计）
 

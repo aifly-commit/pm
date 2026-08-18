@@ -60,7 +60,7 @@ onMounted(load)
 <template>
   <div class="page">
     <div class="page-header">
-      <div>
+      <div class="page-heading">
         <h2 class="page-title">通知中心</h2>
         <p class="page-sub">环节临期 / 逾期提醒与状态变更通知</p>
       </div>

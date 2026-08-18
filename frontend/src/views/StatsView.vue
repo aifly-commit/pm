@@ -47,7 +47,7 @@ onMounted(load)
 <template>
   <div class="page">
     <div class="page-header">
-      <div>
+      <div class="page-heading">
         <h2 class="page-title">统计分析</h2>
         <p class="page-sub">当前进展总览 · 需求与项目周/月报</p>
       </div>

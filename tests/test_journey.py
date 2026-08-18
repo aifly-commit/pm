@@ -142,7 +142,7 @@ class TestJourney:
             )
         ).json()
         release = stage_of(detail, "release")
-        assert release["planned_end"] == "2030-01-23T20:00:00+08:00"  # 顺延 3 天
+        assert release["planned_end"] == "2030-01-23"  # 顺延 3 天
         auto_logs = [l for l in detail["change_logs"] if l["auto_generated"]]
         assert all(l["reason"] == "需求暂停顺延" for l in auto_logs)
 

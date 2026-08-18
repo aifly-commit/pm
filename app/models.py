@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
@@ -22,6 +22,11 @@ from app.db import Base
 from app.enums import RequirementStatus, StageStatus, StageType, UserRole
 
 
+def now_local_second() -> datetime:
+    """统一落库到秒，避免 API 时间值出现微秒。"""
+    return datetime.now().replace(microsecond=0)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -31,7 +36,7 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(64), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
 
 
 class Project(Base):
@@ -45,13 +50,13 @@ class Project(Base):
     progress_note: Mapped[Optional[str]] = mapped_column(Text)
     progress_percent: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="not_started")
-    planned_start: Mapped[Optional[date]] = mapped_column(DateTime)
-    planned_end: Mapped[Optional[date]] = mapped_column(DateTime)
-    actual_start: Mapped[Optional[date]] = mapped_column(DateTime)
-    actual_end: Mapped[Optional[date]] = mapped_column(DateTime)
+    planned_start: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    planned_end: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    actual_start: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    actual_end: Mapped[Optional[datetime]] = mapped_column(DateTime)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
 
     requirements: Mapped[list[Requirement]] = relationship(back_populates="project")
 
@@ -67,6 +72,7 @@ class Requirement(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    remark: Mapped[Optional[str]] = mapped_column(Text)
     # 产品线（enums.PRODUCT_LINES，创建必填）
     product_line: Mapped[Optional[str]] = mapped_column(String(32))
     # 需求分类（enums.REQ_CATEGORIES）与需求来源（自由文本）
@@ -85,13 +91,16 @@ class Requirement(Base):
     paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     # 手动状态覆盖位：非空时冻结 status，不受 recalc/扫描/环节流转影响（design.md 3.3）
     manual_status: Mapped[Optional[str]] = mapped_column(String(16))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
 
     stages: Mapped[list[RequirementStage]] = relationship(
         back_populates="requirement", order_by="RequirementStage.seq"
     )
     project: Mapped[Optional[Project]] = relationship(back_populates="requirements")
+    modification_logs: Mapped[list[RequirementModificationLog]] = relationship(
+        back_populates="requirement"
+    )
 
 
 class RequirementStage(Base):
@@ -145,7 +154,7 @@ class StageTimeChangeLog(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     # TRUE = 系统自动产生（如暂停顺延），统计时排除（design.md 6.3）
     auto_generated: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
 
     stage: Mapped[RequirementStage] = relationship(back_populates="change_logs")
 
@@ -166,7 +175,30 @@ class StageRevertLog(Base):
     )
     reverted_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
+
+
+class RequirementModificationLog(Base):
+    """需求明细字段的人工修改留痕。
+
+    环节排期、回退与状态各有既有专用日志表；本表补齐标题、备注等基础
+    明细的审计记录，详情接口会将四类日志按时间合并后输出。
+    """
+
+    __tablename__ = "requirement_modification_logs"
+    __table_args__ = (Index("ix_requirement_modification_logs_requirement_created", "requirement_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    requirement_id: Mapped[int] = mapped_column(
+        ForeignKey("requirements.id"), nullable=False
+    )
+    changed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    field: Mapped[str] = mapped_column(String(64), nullable=False)
+    old_value: Mapped[Optional[str]] = mapped_column(Text)
+    new_value: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
+
+    requirement: Mapped[Requirement] = relationship(back_populates="modification_logs")
 
 
 class Notification(Base):
@@ -183,7 +215,7 @@ class Notification(Base):
     # 防重复键：{stage_id}:{type}:{yyyy-mm-dd}；status_changed 置 NULL（design.md 4.1）
     dedupe_key: Mapped[Optional[str]] = mapped_column(String(128), unique=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)
 
 
 class RequirementStatusLog(Base):
@@ -203,4 +235,4 @@ class RequirementStatusLog(Base):
     to_status: Mapped[str] = mapped_column(String(16), nullable=False)
     # 操作人；系统兜底刷新（定时扫描）为 NULL
     changed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local_second)

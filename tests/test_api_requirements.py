@@ -43,7 +43,7 @@ class TestCreateRequirement:
             )
         ).json()
         assert [s["seq"] for s in detail["stages"]] == [1, 2, 3, 4, 5, 6, 7]
-        assert detail["stages"][0]["planned_start"] == "2030-01-01T09:00:00+08:00"
+        assert detail["stages"][0]["planned_start"] == "2030-01-01"
 
     async def test_create_requires_product_line_422(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
@@ -87,7 +87,7 @@ class TestCreateRequirement:
             headers=auth_header(token),
         )
         assert resp.status_code == 201, resp.text
-        assert resp.json()["planned_release"] == "2030-02-10T23:59:59+08:00"
+        assert resp.json()["planned_release"] == "2030-02-10"
         detail = (
             await app_client.get(
                 f"/api/v1/requirements/{resp.json()['id']}", headers=auth_header(token)
@@ -124,7 +124,7 @@ class TestCreateRequirement:
         assert resp.status_code == 201, resp.text
         resp = await app_client.get("/api/v1/requirements", headers=auth_header(token))
         item = resp.json()["items"][0]
-        assert item["planned_release"] == "2030-01-20T20:00:00+08:00"
+        assert item["planned_release"] == "2030-01-20"
         assert item["actual_release"] is None
 
     async def test_create_with_invalid_times_409(self, app_client, pm_user):
@@ -298,6 +298,87 @@ class TestListRequirements:
         )
         assert resp.json()["total"] == 0
 
+    async def test_list_filter_by_category_and_priority(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(title="重点 P0", category="重点能力", priority="P0"),
+            headers=auth_header(token),
+        )
+        await app_client.post(
+            "/api/v1/requirements",
+            json=create_body(title="重点 P1", category="重点能力", priority="P1"),
+            headers=auth_header(token),
+        )
+        resp = await app_client.get(
+            "/api/v1/requirements",
+            params={"category": "重点能力", "priority": "P0"},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["total"] == 1
+        assert resp.json()["items"][0]["title"] == "重点 P0"
+
+
+class TestImportRequirements:
+    async def test_pm_imports_multiple_requirements_atomically(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        payload = {
+            "items": [
+                create_body(title="批量导入需求 A", product_line="MySQL", priority="P1"),
+                create_body(title="批量导入需求 B", product_line="Redis", category="重点能力"),
+            ]
+        }
+        resp = await app_client.post(
+            "/api/v1/requirements/import", json=payload, headers=auth_header(token)
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["imported_count"] == 2
+        assert [item["title"] for item in body["items"]] == [
+            "批量导入需求 A",
+            "批量导入需求 B",
+        ]
+        # 导入响应是列表摘要；详情接口确认每条已生成固定的 7 个环节。
+        for item in body["items"]:
+            detail = await app_client.get(
+                f"/api/v1/requirements/{item['id']}", headers=auth_header(token)
+            )
+            assert len(detail.json()["stages"]) == 7
+
+    async def test_import_rejects_other_pm_without_partial_write(self, app_client, pm_user, db):
+        other = await seed_user(db, "import_pm2", "pm")
+        token = await login_token(app_client, "pm1")
+        payload = {
+            "items": [
+                create_body(title="不应写入", responsible_pm_id=other.id),
+            ]
+        }
+        resp = await app_client.post(
+            "/api/v1/requirements/import", json=payload, headers=auth_header(token)
+        )
+        assert resp.status_code == 403
+        listed = await app_client.get("/api/v1/requirements", headers=auth_header(token))
+        assert listed.json()["total"] == 0
+
+    async def test_import_is_atomic_when_a_stage_plan_is_invalid(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        payload = {
+            "items": [
+                create_body(title="本应回滚"),
+                create_body(
+                    title="缺少上线时间",
+                    stages=[{"stage_type": "release", "planned_start": "2030-01-01T00:00:00+08:00"}],
+                ),
+            ]
+        }
+        resp = await app_client.post(
+            "/api/v1/requirements/import", json=payload, headers=auth_header(token)
+        )
+        assert resp.status_code == 409
+        listed = await app_client.get("/api/v1/requirements", headers=auth_header(token))
+        assert listed.json()["total"] == 0
+
 
 class TestGetAndUpdateRequirement:
     async def test_detail_includes_logs(self, app_client, pm_user):
@@ -313,8 +394,10 @@ class TestGetAndUpdateRequirement:
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["stages"]) == 7
+        assert body["remark"] is None
         assert body["change_logs"] == []
         assert body["revert_logs"] == []
+        assert body["modification_logs"] == []
         assert body["current_stage"] == "需求调研"
 
     async def test_detail_nonexistent_404(self, app_client, pm_user):
@@ -339,6 +422,33 @@ class TestGetAndUpdateRequirement:
         assert resp.status_code == 200
         assert resp.json()["title"] == "改标题"
         assert resp.json()["priority"] == "P0"
+
+    async def test_patch_detail_supports_remark_clearing_and_audit_log(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = (
+            await app_client.post(
+                "/api/v1/requirements",
+                json=create_body(description="原始描述", remark="原始备注"),
+                headers=auth_header(token),
+            )
+        ).json()["id"]
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}",
+            json={"description": None, "remark": "已补充风险说明", "source": "客户反馈"},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["description"] is None
+        assert body["remark"] == "已补充风险说明"
+        logs = {log["field"]: log for log in body["modification_logs"]}
+        assert logs["description"]["old_value"] == "原始描述"
+        assert logs["description"]["new_value"] is None
+        assert logs["remark"]["old_value"] == "原始备注"
+        assert logs["remark"]["new_value"] == "已补充风险说明"
+        assert logs["source"]["changed_by"] == pm_user.id
+        timestamps = [log["created_at"] for log in body["modification_logs"]]
+        assert timestamps == sorted(timestamps, reverse=True)
 
     async def test_patch_by_other_pm_403(self, app_client, pm_user, db):
         await seed_user(db, "pm2", "pm")
@@ -389,6 +499,10 @@ class TestGetAndUpdateRequirement:
         )
         assert resp.status_code == 200
         assert resp.json()["stages"][0]["assignee_id"] == dev.id
+        assert any(
+            log["field"] == "stage_assignee:research"
+            for log in resp.json()["modification_logs"]
+        )
 
     async def test_patch_stage_from_other_requirement_404(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
@@ -501,7 +615,7 @@ class TestLifecycle:
         # 7 个环节都有预估时间 → 顺延 3 天应产生 start+end 各 7 条 = 14 条
         assert len(auto_logs) == 14
         research = next(s for s in detail["stages"] if s["stage_type"] == "research")
-        assert research["planned_start"] == "2030-01-04T09:00:00+08:00"
+        assert research["planned_start"] == "2030-01-04"
 
     async def test_resume_not_paused_409(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
@@ -737,6 +851,32 @@ class TestSetStatus:
         body = resp.json()
         assert body["manual_status"] is None
         assert body["status"] == "not_started"  # 回到按环节推导
+
+    async def test_clear_done_override_returns_to_auto(self, app_client, pm_user):
+        """清除 manual done 不能被旧 status="done" 的终态短路。"""
+        token = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, token)
+        await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": "done"},
+            headers=auth_header(token),
+        )
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}/status",
+            json={"status": None},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["manual_status"] is None
+        assert resp.json()["status"] == "not_started"
+
+    async def test_status_body_requires_explicit_status(self, app_client, pm_user):
+        token = await login_token(app_client, "pm1")
+        rid = await self._create(app_client, token)
+        resp = await app_client.patch(
+            f"/api/v1/requirements/{rid}/status", json={}, headers=auth_header(token)
+        )
+        assert resp.status_code == 422
 
     async def test_set_status_permission_403(self, app_client, pm_user, db):
         await seed_user(db, "pm2", "pm")

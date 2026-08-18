@@ -10,10 +10,13 @@ from app.db import get_session
 from app.models import User
 from app.schemas import (
     ChangeLogOut,
+    RequirementModificationLogOut,
     ReasonIn,
     RevertLogOut,
     RequirementCreate,
     RequirementDetailOut,
+    RequirementImportIn,
+    RequirementImportOut,
     RequirementListOut,
     RequirementOut,
     RequirementStatusUpdate,
@@ -60,6 +63,8 @@ async def list_requirements(
     status: str | None = None,
     stage_type: str | None = None,
     product_line: str | None = None,
+    category: str | None = None,
+    priority: str | None = None,
     pm_id: int | None = None,
     project_id: int | None = None,
     keyword: str | None = None,
@@ -73,6 +78,8 @@ async def list_requirements(
         status=status,
         stage_type=stage_type,
         product_line=product_line,
+        category=category,
+        priority=priority,
         pm_id=pm_id,
         project_id=project_id,
         keyword=keyword,
@@ -104,6 +111,7 @@ async def create_requirement(
             session,
             title=body.title,
             description=body.description,
+            remark=body.remark,
             product_line=body.product_line,
             category=body.category,
             source=body.source,
@@ -118,6 +126,57 @@ async def create_requirement(
     stages = await req_service.get_stages(session, req.id)
     names = await _names_for(session, [req])
     return _to_out(req, stages, names)
+
+
+@router.post("/requirements/import", response_model=RequirementImportOut, status_code=201)
+async def import_requirements(
+    body: RequirementImportIn,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> RequirementImportOut:
+    """批量导入需求。
+
+    每个条目复用创建需求的字段和排期校验；整批事务性提交，任一条失败即不导入。
+    PM 只能导入自己负责的需求，管理员可指定任意负责 PM。
+    """
+    if user.role not in ("pm", "admin"):
+        raise HTTPException(status_code=403, detail="仅产品经理或管理员可导入需求")
+
+    for item in body.items:
+        if item.responsible_pm_id not in (None, user.id) and user.role != "admin":
+            raise HTTPException(status_code=403, detail="仅管理员可指定他人为负责产品经理")
+
+    imported = []
+    try:
+        # 保存点保证任一条失败时仅回滚本批写入，不影响请求外层已有事务。
+        async with session.begin_nested():
+            for item in body.items:
+                pm_id = item.responsible_pm_id or user.id
+                imported.append(
+                    await req_service.create_requirement(
+                        session,
+                        title=item.title,
+                        description=item.description,
+                        remark=item.remark,
+                        product_line=item.product_line,
+                        category=item.category,
+                        source=item.source,
+                        priority=item.priority,
+                        project_id=item.project_id,
+                        responsible_pm_id=pm_id,
+                        stage_plans=[stage.model_dump() for stage in item.stages],
+                    )
+                )
+        await session.commit()
+    except RequirementError as e:
+        raise _error(e)
+
+    names = await _names_for(session, imported)
+    items = [
+        _to_out(req, await req_service.get_stages(session, req.id), names)
+        for req in imported
+    ]
+    return RequirementImportOut(imported_count=len(items), items=items)
 
 
 @router.patch("/requirements/{req_id}/status", response_model=RequirementDetailOut)
@@ -150,18 +209,77 @@ async def get_requirement(
     _user: User = Depends(get_current_user),
 ) -> RequirementDetailOut:
     try:
-        req, stages, change_logs, revert_logs = await req_service.get_full(
+        req, stages, change_logs, revert_logs, detail_logs, status_logs = await req_service.get_full(
             session, req_id
         )
     except RequirementError as e:
         raise _error(e)
     names = await _names_for(session, [req])
     base = _to_out(req, stages, names).model_dump()
+    stage_by_id = {stage.id: stage for stage in stages}
+
+    def _time_value(value):
+        if value is None:
+            return None
+        return value.date().isoformat()
+
+    modification_logs = [
+        RequirementModificationLogOut(
+            id=f"detail-{log.id}",
+            change_type="detail",
+            field=log.field,
+            old_value=log.old_value,
+            new_value=log.new_value,
+            changed_by=log.changed_by,
+            created_at=log.created_at,
+        )
+        for log in detail_logs
+    ]
+    modification_logs.extend(
+        RequirementModificationLogOut(
+            id=f"plan-{log.id}",
+            change_type="stage_time",
+            field=f"{stage_by_id[log.stage_id].stage_type}:{log.field}",
+            old_value=_time_value(log.old_value),
+            new_value=_time_value(log.new_value),
+            reason=log.reason,
+            changed_by=log.changed_by,
+            created_at=log.created_at,
+        )
+        for log in change_logs
+    )
+    modification_logs.extend(
+        RequirementModificationLogOut(
+            id=f"revert-{log.id}",
+            change_type="revert",
+            field="stage_revert",
+            old_value=stage_by_id[log.from_stage_id].stage_type,
+            new_value=stage_by_id[log.to_stage_id].stage_type,
+            reason=log.reason,
+            changed_by=log.reverted_by,
+            created_at=log.created_at,
+        )
+        for log in revert_logs
+    )
+    modification_logs.extend(
+        RequirementModificationLogOut(
+            id=f"status-{log.id}",
+            change_type="status",
+            field="status",
+            old_value=log.from_status,
+            new_value=log.to_status,
+            changed_by=log.changed_by,
+            created_at=log.created_at,
+        )
+        for log in status_logs
+    )
+    modification_logs.sort(key=lambda item: (item.created_at, item.id), reverse=True)
     return RequirementDetailOut(
         **base,
         stages=[StageOut.model_validate(s) for s in stages],
         change_logs=[ChangeLogOut.model_validate(l) for l in change_logs],
         revert_logs=[RevertLogOut.model_validate(l) for l in revert_logs],
+        modification_logs=modification_logs,
     )
 
 
@@ -180,6 +298,7 @@ async def update_requirement(
             req,
             title=body.title,
             description=body.description,
+            remark=body.remark,
             product_line=body.product_line,
             category=body.category,
             source=body.source,
@@ -191,6 +310,8 @@ async def update_requirement(
                 if body.stage_assignees is not None
                 else None
             ),
+            actor_id=user.id,
+            provided_fields=body.model_fields_set,
         )
         await session.commit()
     except RequirementError as e:

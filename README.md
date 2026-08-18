@@ -39,6 +39,16 @@ bash scripts/smoke.sh
 pytest
 ```
 
+## 本地示例数据
+
+保留已有用户账号，清空本地 `pm.db` 中的项目、需求、环节、日志与通知，再生成可用于列表、筛选、统计和提醒页面验证的示例数据：
+
+```bash
+.venv/bin/python scripts/seed_demo_data.py --reset
+```
+
+该脚本仅允许操作默认本地数据库 `sqlite+aiosqlite:///./pm.db`。
+
 ## 开发纪律
 
 - 每次迭代测试闭环：写码 → `pytest` 全绿 → 提交

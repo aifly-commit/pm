@@ -316,11 +316,11 @@ class TestPlanUpdate:
         stage_obj.reminder_sent = True
         await db.commit()
 
-        # 提前收口（不破坏下游顺序：review 仍从 01-03T18:00 开始）
+        # 提前一天收口（不破坏下游顺序：review 仍从 01-03 开始）
         resp = await app_client.patch(
             f"/api/v1/stages/{sid}/plan",
             json={
-                "planned_end": "2030-01-03T10:00:00+08:00",
+                "planned_end": "2030-01-02",
                 "reason": "提前收口",
             },
             headers=auth_header(token),
@@ -336,8 +336,8 @@ class TestPlanUpdate:
         ).json()
         assert len(logs) == 1
         assert logs[0]["field"] == "planned_end"
-        assert logs[0]["old_value"] == "2030-01-03T18:00:00+08:00"
-        assert logs[0]["new_value"] == "2030-01-03T10:00:00+08:00"
+        assert logs[0]["old_value"] == "2030-01-03"
+        assert logs[0]["new_value"] == "2030-01-02"
         assert logs[0]["reason"] == "提前收口"
         assert logs[0]["auto_generated"] is False
 
@@ -382,9 +382,9 @@ class TestPlanUpdate:
         assert len(logs) == 2
         by_field = {l["field"]: l for l in logs}
         assert by_field["planned_start"]["old_value"] is None
-        assert by_field["planned_start"]["new_value"] == "2030-02-02T09:00:00+08:00"
+        assert by_field["planned_start"]["new_value"] == "2030-02-02"
         assert by_field["planned_end"]["old_value"] is None
-        assert by_field["planned_end"]["new_value"] == "2030-02-04T18:00:00+08:00"
+        assert by_field["planned_end"]["new_value"] == "2030-02-04"
 
     async def test_update_plan_conflict_409(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")
@@ -407,7 +407,7 @@ class TestPlanUpdate:
                 f"/api/v1/requirements/{detail['id']}", headers=auth_header(token)
             )
         ).json()
-        assert stage_of(detail2, "research")["planned_end"] == "2030-01-03T18:00:00+08:00"
+        assert stage_of(detail2, "research")["planned_end"] == "2030-01-03"
 
     async def test_update_plan_requires_reason(self, app_client, pm_user):
         token = await login_token(app_client, "pm1")

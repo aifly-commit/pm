@@ -52,17 +52,5 @@ export function stageLabel(type) {
 
 export function fmtTime(value) {
   if (!value) return '—'
-  return String(value).replace('T', ' ').slice(0, 16)
-}
-
-export function fmtDate(value) {
-  if (!value) return '—'
   return String(value).slice(0, 10)
-}
-
-// 月份展示：yyyy.mm（预计上线时间等）
-export function fmtMonth(value) {
-  if (!value) return '—'
-  const s = String(value)
-  return `${s.slice(0, 4)}.${s.slice(5, 7)}`
 }

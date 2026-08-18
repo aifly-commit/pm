@@ -1,10 +1,13 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api, getToken, getStoredUser, clearToken } from './api'
 
 const router = useRouter()
+const route = useRoute()
 const user = ref(getStoredUser())
+const authenticated = ref(Boolean(getToken()))
+const profileLoading = ref(false)
 const unread = ref(0)
 const collapsed = ref(localStorage.getItem('pm_sidebar_collapsed') === '1')
 
@@ -17,6 +20,10 @@ const roleLabel = computed(() => {
   const map = { pm: '产品经理', developer: '研发', tester: '测试', admin: '管理员' }
   return map[user.value?.role] || user.value?.role || ''
 })
+
+const todayLabel = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+}).format(new Date())
 
 async function refreshUnread() {
   if (!getToken()) return
@@ -31,24 +38,34 @@ async function refreshUnread() {
 function logout() {
   clearToken()
   user.value = null
+  authenticated.value = false
   router.push('/login')
 }
 
-onMounted(() => {
-  if (getToken()) {
-    if (!user.value) {
-      api
-        .get('/auth/me')
-        .then((me) => {
-          user.value = me
-          localStorage.setItem('pm_user', JSON.stringify(me))
-        })
-        .catch(() => {})
-    }
-    refreshUnread()
-    setInterval(refreshUnread, 60_000) // 前端轮询（design.md 4.2）
+async function ensureSession() {
+  if (route.path === '/login' || !getToken()) {
+    authenticated.value = false
+    return
   }
-})
+  authenticated.value = true
+  if (!user.value) {
+    profileLoading.value = true
+    try {
+      const me = await api.get('/auth/me')
+      user.value = me
+      localStorage.setItem('pm_user', JSON.stringify(me))
+    } catch {
+      // api 客户端会在 401 时清理会话并跳转；这里保留占位避免侧栏闪烁。
+    } finally {
+      profileLoading.value = false
+    }
+  }
+  refreshUnread()
+}
+
+// App 在登录页和业务页之间不会重新挂载；监听路由确保刚登录后立即同步资料。
+watch(() => route.path, ensureSession, { immediate: true })
+setInterval(refreshUnread, 60_000) // 前端轮询（design.md 4.2）
 </script>
 
 <template>
@@ -62,6 +79,7 @@ onMounted(() => {
       </div>
 
       <nav class="nav">
+        <div class="nav-section">工作导航</div>
         <router-link to="/requirements" class="nav-item" title="需求管理">
           <span class="nav-char">需</span>
           <span class="nav-dot" /><span class="nav-text">需求管理</span>
@@ -77,14 +95,17 @@ onMounted(() => {
         <router-link to="/notifications" class="nav-item" title="通知中心">
           <span class="nav-char">通</span>
           <span class="nav-dot" /><span class="nav-text">通知中心</span>
-          <el-badge v-if="unread" :value="unread" :max="99" class="nav-badge" />
+          <el-badge v-if="unread && !collapsed" :value="unread" :max="99" class="nav-badge" />
         </router-link>
       </nav>
 
-      <div class="user-area" v-if="user">
-        <div class="user-card">
-          <div class="avatar">{{ (user.display_name || '?').slice(0, 1) }}</div>
-          <span class="user-info user-name">{{ user.display_name }}<span class="user-role">· {{ roleLabel }}</span></span>
+      <div class="user-area" v-if="authenticated">
+        <div class="user-card" :class="{ 'is-loading': profileLoading }">
+          <div class="avatar">{{ (user?.display_name || '…').slice(0, 1) }}</div>
+          <span class="user-info user-name">
+            {{ user?.display_name || '正在加载账户信息' }}
+            <span v-if="roleLabel" class="user-role">· {{ roleLabel }}</span>
+          </span>
         </div>
         <button class="logout-btn" title="退出登录" @click="logout">
           <span class="logout-text">退出登录</span>
@@ -98,6 +119,7 @@ onMounted(() => {
     </aside>
 
     <main class="main">
+      <div class="workspace-date"><span class="live-dot" />{{ todayLabel }}</div>
       <router-view @notification-may-change="refreshUnread" />
     </main>
   </div>
@@ -112,11 +134,12 @@ onMounted(() => {
 
 /* ---------- 侧边栏骨架：宽度过渡 + 内部元素只做透明度/位移，避免 layout 抖动 ---------- */
 .sidebar {
-  width: 176px;
+  width: 192px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, #141c33 0%, #1b2440 60%, #1f2a4a 100%);
+  background: radial-gradient(circle at 18% 0%, rgba(93, 122, 255, 0.27), transparent 31%),
+    linear-gradient(180deg, #111a31 0%, #182542 58%, #1a2643 100%);
   color: #cdd5e6;
   position: sticky;
   top: 0;
@@ -169,16 +192,16 @@ onMounted(() => {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 18px 14px 14px;
+  gap: 9px;
+  padding: 19px 14px 15px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .brand-logo {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #4c6fff, #7c9aff);
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6a83ff, #8f6cff);
   color: #fff;
   font-weight: 700;
   font-size: 14px;
@@ -191,29 +214,44 @@ onMounted(() => {
 }
 
 .brand-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
   color: #fff;
 }
 
 /* ---------- 导航 ---------- */
 .nav {
-  flex: 1;
-  padding: 12px 8px;
+  flex: 0 0 auto;
+  padding: 15px 10px 8px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
+
+.nav-section {
+  padding: 0 12px 7px;
+  color: #7180a6;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: opacity 0.18s ease;
+}
+
+.sidebar.collapsed .nav-section { opacity: 0; }
 
 .nav-item {
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 40px;
-  padding: 0 12px;
+  height: 42px;
+  padding: 0 13px;
   border-radius: 10px;
-  font-size: 13.5px;
+  font-size: 13px;
+  font-weight: 500;
   color: #a8b3cf;
   overflow: hidden;
   transition: background 0.2s ease, color 0.2s ease;
@@ -225,7 +263,7 @@ onMounted(() => {
 }
 
 .nav-item.router-link-active {
-  background: linear-gradient(90deg, rgba(76, 111, 255, 0.95), rgba(76, 111, 255, 0.6));
+  background: linear-gradient(100deg, rgba(90, 117, 255, 0.98), rgba(90, 117, 255, 0.58));
   color: #fff;
   box-shadow: 0 4px 12px rgba(76, 111, 255, 0.35);
 }
@@ -288,11 +326,7 @@ onMounted(() => {
 }
 
 .sidebar.collapsed .nav-badge {
-  position: absolute;
-  left: 50%;
-  top: 4px;
-  transform: translateX(6px) scale(0.85);
-  margin-left: 0;
+  display: none;
 }
 
 /* ---------- 用户区：与导航区左右边距一致（8px），保证收起态圆心同一竖线 ---------- */
@@ -300,44 +334,66 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  margin: 12px 8px;
+  gap: 7px;
+  margin: auto 10px 12px;
 }
 
 .user-card {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 34px;
+  justify-content: flex-start;
+  gap: 0;
+  height: 36px;
+  box-sizing: border-box;
   padding: 0 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.055);
   border: 1px solid rgba(255, 255, 255, 0.07);
   transition: padding 0.28s ease;
 }
 
+.user-card.is-loading { opacity: 0.76; }
+
 .sidebar.collapsed .user-card {
-  padding: 4px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
   gap: 0; /* 名字已零宽，gap 会把头像顶偏 */
   border-radius: 50%;
-  /* 收起态去掉外层椭圆圈，仅保留头像本身 */
+  /* 与退出按钮使用同一套外框；头像仅作为内部识别内容。 */
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.sidebar.collapsed .user-card,
+.sidebar.collapsed .logout-btn {
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #a8b3cf;
+}
+
+.sidebar.collapsed .avatar {
   background: transparent;
-  border-color: transparent;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #5b7bff, #9a6cff);
-  color: #fff;
-  font-size: 14px;
+  /* 收起/展开均不切换底色，避免透明度动画期间闪现旧的蓝色头像。 */
+  background: transparent;
+  color: #a8b3cf;
+  font-size: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  /* 展开态：不显示姓氏圆标，仅显示用户名；收起态才显示 */
+  /* 展开态使用完整姓名，不再重复显示姓名首字；收起态才展示头像。 */
   opacity: 0;
   max-width: 0;
   transition: opacity 0.18s ease, max-width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
@@ -346,7 +402,7 @@ onMounted(() => {
 
 .sidebar.collapsed .avatar {
   opacity: 1;
-  max-width: 32px;
+  max-width: 28px;
 }
 
 .user-info {
@@ -354,7 +410,8 @@ onMounted(() => {
 }
 
 .user-name {
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
   color: #eef1fa;
   white-space: nowrap;
   overflow: hidden;
@@ -366,24 +423,24 @@ onMounted(() => {
 }
 
 .user-role {
-  font-size: 11px;
-  color: #66739a;
+  font-size: 10px;
+  color: #7f8daf;
 }
 
 /* 退出：胶囊按钮，文字居中，悬停显红 */
 .logout-btn {
   position: relative;
   flex-shrink: 0;
-  height: 34px;
+  height: 36px;
   min-width: 34px;
   padding: 0 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
+  border-radius: 9px;
   background: rgba(255, 255, 255, 0.04);
   color: #a8b3cf;
-  font-size: 13px;
-  letter-spacing: 1px;
-  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-align: left;
   cursor: pointer;
   overflow: hidden;
   transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease,
@@ -413,7 +470,8 @@ onMounted(() => {
 
 .sidebar.collapsed .logout-btn {
   padding: 0;
-  width: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
 }
 
@@ -424,8 +482,8 @@ onMounted(() => {
 
 /* ---------- 收起/展开按钮 ---------- */
 .collapse-btn {
-  margin: 0 8px 14px;
-  padding: 7px 0;
+  margin: 0 10px 14px;
+  padding: 6px 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.04);
@@ -443,6 +501,48 @@ onMounted(() => {
 .main {
   flex: 1;
   min-width: 0;
-  padding: 24px 28px 40px;
+  padding: 22px 32px 44px;
+  background: radial-gradient(circle at 90% 0%, rgba(111, 135, 255, 0.11), transparent 25%), var(--pm-bg);
+}
+
+.workspace-date {
+  position: fixed;
+  right: 24px;
+  bottom: 18px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgba(91, 112, 177, 0.15);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 5px 18px rgba(52, 67, 116, 0.08);
+  color: #64718f;
+  font-size: 12px;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #48c78e;
+  box-shadow: 0 0 0 3px rgba(72, 199, 142, 0.14);
+}
+
+@media (max-width: 760px) {
+  .sidebar { width: 68px; }
+  .sidebar .brand-text, .sidebar .nav-text, .sidebar .user-info, .sidebar .logout-text {
+    opacity: 0;
+    max-width: 0;
+  }
+  .sidebar .nav-dot { opacity: 0; }
+  .sidebar .nav-char { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
+  .sidebar .avatar { opacity: 1; max-width: 32px; }
+  .sidebar .user-card { padding: 4px; gap: 0; border-radius: 50%; background: transparent; border-color: transparent; }
+  .sidebar .logout-btn { padding: 0; width: 34px; border-radius: 50%; }
+  .sidebar .logout-char { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  .main { padding: 16px 16px 32px; }
+  .workspace-date { right: 14px; bottom: 14px; }
 }
 </style>

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,12 +15,23 @@ from app.services import stats as stats_service
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 
+def _date_only(value):
+    """统计接口没有独立 schema，递归将 datetime 统一为 YYYY-MM-DD。"""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, dict):
+        return {key: _date_only(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_date_only(item) for item in value]
+    return value
+
+
 @router.get("/overview")
 async def overview(
     session: AsyncSession = Depends(get_session),
     _user: User = Depends(get_current_user),
 ) -> dict:
-    return await stats_service.overview(session)
+    return _date_only(await stats_service.overview(session))
 
 
 @router.get("/requirements/weekly")
@@ -31,7 +42,7 @@ async def requirement_weekly(
 ) -> dict:
     d = date_in or date.today()
     start, end = stats_service.week_bounds(d)
-    return await stats_service.requirement_report(session, start, end)
+    return _date_only(await stats_service.requirement_report(session, start, end))
 
 
 @router.get("/requirements/monthly")
@@ -41,7 +52,7 @@ async def requirement_monthly(
     _user: User = Depends(get_current_user),
 ) -> dict:
     start, end = stats_service.month_bounds(month)
-    return await stats_service.requirement_monthly(session, start, end)
+    return _date_only(await stats_service.requirement_monthly(session, start, end))
 
 
 @router.get("/projects/weekly")
@@ -54,8 +65,8 @@ async def projects_weekly(
 ) -> dict:
     d = date_in or date.today()
     start, end = stats_service.week_bounds(d)
-    return await stats_service.projects_report(
-        session, start, end, status=status, owner_id=owner_id
+    return _date_only(
+        await stats_service.projects_report(session, start, end, status=status, owner_id=owner_id)
     )
 
 
@@ -68,6 +79,6 @@ async def projects_monthly(
     _user: User = Depends(get_current_user),
 ) -> dict:
     start, end = stats_service.month_bounds(month)
-    return await stats_service.projects_report(
-        session, start, end, status=status, owner_id=owner_id
+    return _date_only(
+        await stats_service.projects_report(session, start, end, status=status, owner_id=owner_id)
     )

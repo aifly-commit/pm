@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.enums import PARALLEL_STAGES, STAGE_SEQ, StageStatus, StageType
 from app.models import (
     Requirement,
+    RequirementModificationLog,
     RequirementStage,
     RequirementStatusLog,
     StageRevertLog,
@@ -43,7 +44,7 @@ def now_sh() -> datetime:
     """当前 Asia/Shanghai naive 时间。"""
     from app.core.config import TZ
 
-    return datetime.now(TZ).replace(tzinfo=None)
+    return datetime.now(TZ).replace(tzinfo=None, microsecond=0)
 
 
 def current_stage_label(stages: list[RequirementStage]) -> str | None:
@@ -97,8 +98,15 @@ async def get_stages(session: AsyncSession, req_id: int) -> list[RequirementStag
 
 async def get_full(
     session: AsyncSession, req_id: int
-) -> tuple[Requirement, list[RequirementStage], list[StageTimeChangeLog], list[StageRevertLog]]:
-    """详情页数据：需求 + 环节 + 变更历史 + 回退历史。"""
+) -> tuple[
+    Requirement,
+    list[RequirementStage],
+    list[StageTimeChangeLog],
+    list[StageRevertLog],
+    list[RequirementModificationLog],
+    list[RequirementStatusLog],
+]:
+    """详情页数据：需求、环节及所有用于生成修改记录的原始日志。"""
     req = await get_requirement(session, req_id)
     stages = await get_stages(session, req_id)
     change_logs = list(
@@ -120,7 +128,28 @@ async def get_full(
             )
         ).all()
     )
-    return req, stages, change_logs, revert_logs
+    modification_logs = list(
+        (
+            await session.scalars(
+                select(RequirementModificationLog)
+                .where(RequirementModificationLog.requirement_id == req_id)
+                .order_by(
+                    RequirementModificationLog.created_at.desc(),
+                    RequirementModificationLog.id.desc(),
+                )
+            )
+        ).all()
+    )
+    status_logs = list(
+        (
+            await session.scalars(
+                select(RequirementStatusLog)
+                .where(RequirementStatusLog.requirement_id == req_id)
+                .order_by(RequirementStatusLog.created_at.desc(), RequirementStatusLog.id.desc())
+            )
+        ).all()
+    )
+    return req, stages, change_logs, revert_logs, modification_logs, status_logs
 
 
 async def create_requirement(
@@ -135,6 +164,7 @@ async def create_requirement(
     project_id: int | None,
     responsible_pm_id: int,
     stage_plans: list[dict],
+    remark: str | None = None,
 ) -> Requirement:
     """创建需求并生成 7 个环节（design.md 3.1）。
 
@@ -157,6 +187,7 @@ async def create_requirement(
     req = Requirement(
         title=title,
         description=description,
+        remark=remark,
         product_line=product_line,
         category=category,
         source=source,
@@ -194,6 +225,7 @@ async def update_requirement(
     *,
     title: str | None = None,
     description: str | None = None,
+    remark: str | None = None,
     product_line: str | None = None,
     category: str | None = None,
     source: str | None = None,
@@ -201,35 +233,52 @@ async def update_requirement(
     project_id: int | None = None,
     responsible_pm_id: int | None = None,
     stage_assignees: list[dict] | None = None,
+    actor_id: int | None = None,
+    provided_fields: set[str] | None = None,
 ) -> Requirement:
-    """编辑基础字段与环节负责人（design.md 8.2 PATCH）。"""
-    if project_id is not None:
+    """编辑基础字段与环节负责人，并逐字段写入需求修改记录。"""
+    provided_fields = provided_fields or set()
+    if "title" in provided_fields and title is None:
+        raise RequirementError("需求名称不能为空", status=422)
+    if "project_id" in provided_fields and project_id is not None:
         from app.models import Project
 
         if await session.get(Project, project_id) is None:
             raise RequirementError(f"项目 {project_id} 不存在", status=404)
-    if title is not None:
-        req.title = title
-    if description is not None:
-        req.description = description
-    if product_line is not None:
-        req.product_line = product_line
-    if category is not None:
-        req.category = category
-    if source is not None:
-        req.source = source
-    if priority is not None:
-        req.priority = priority
-    if project_id is not None:
-        req.project_id = project_id
-    if responsible_pm_id is not None:
+    if "responsible_pm_id" in provided_fields and responsible_pm_id is not None:
         from app.models import User
 
         if await session.get(User, responsible_pm_id) is None:
             raise RequirementError(f"用户 {responsible_pm_id} 不存在", status=404)
-        req.responsible_pm_id = responsible_pm_id
+    field_values = {
+        "title": title,
+        "description": description,
+        "remark": remark,
+        "product_line": product_line,
+        "category": category,
+        "source": source,
+        "priority": priority,
+        "project_id": project_id,
+        "responsible_pm_id": responsible_pm_id,
+    }
+    for field, new_value in field_values.items():
+        if field not in provided_fields:
+            continue
+        old_value = getattr(req, field)
+        if old_value == new_value:
+            continue
+        setattr(req, field, new_value)
+        session.add(
+            RequirementModificationLog(
+                requirement_id=req.id,
+                changed_by=actor_id,
+                field=field,
+                old_value=None if old_value is None else str(old_value),
+                new_value=None if new_value is None else str(new_value),
+            )
+        )
 
-    if stage_assignees:
+    if "stage_assignees" in provided_fields and stage_assignees:
         stages = await get_stages(session, req.id)
         by_id = {s.id: s for s in stages}
         for item in stage_assignees:
@@ -243,7 +292,21 @@ async def update_requirement(
                     raise RequirementError(
                         f"用户 {item['assignee_id']} 不存在", status=404
                     )
-            stage.assignee_id = item["assignee_id"]
+            if stage.assignee_id != item["assignee_id"]:
+                session.add(
+                    RequirementModificationLog(
+                        requirement_id=req.id,
+                        changed_by=actor_id,
+                        field=f"stage_assignee:{stage.stage_type}",
+                        old_value=(
+                            None if stage.assignee_id is None else str(stage.assignee_id)
+                        ),
+                        new_value=(
+                            None if item["assignee_id"] is None else str(item["assignee_id"])
+                        ),
+                    )
+                )
+                stage.assignee_id = item["assignee_id"]
 
     req.updated_at = now_sh()
     await session.flush()
@@ -256,6 +319,8 @@ async def list_requirements(
     status: str | None = None,
     stage_type: str | None = None,
     product_line: str | None = None,
+    category: str | None = None,
+    priority: str | None = None,
     pm_id: int | None = None,
     project_id: int | None = None,
     keyword: str | None = None,
@@ -273,6 +338,10 @@ async def list_requirements(
         stmt = stmt.where(Requirement.status == status)
     if product_line is not None:
         stmt = stmt.where(Requirement.product_line == product_line)
+    if category is not None:
+        stmt = stmt.where(Requirement.category == category)
+    if priority is not None:
+        stmt = stmt.where(Requirement.priority == priority)
     if pm_id is not None:
         stmt = stmt.where(Requirement.responsible_pm_id == pm_id)
     if project_id is not None:
@@ -322,15 +391,18 @@ async def set_requirement_status(
     两种情况都写 RequirementStatusLog。
     """
     old_status = requirement.status
+    old_manual_status = requirement.manual_status
     if status is None:
         requirement.manual_status = None
         stages = await get_stages(session, requirement.id)
-        recalc_status(requirement, stages, now_sh())
+        # 清除覆盖时必须忽略遗留的展示状态（例如 manual_status="done"），
+        # 按环节事实重新计算自动状态。
+        recalc_status(requirement, stages, now_sh(), force_auto=True)
     else:
         requirement.manual_status = status
         requirement.status = status
     requirement.updated_at = now_sh()
-    if requirement.status != old_status:
+    if requirement.status != old_status or requirement.manual_status != old_manual_status:
         session.add(
             RequirementStatusLog(
                 requirement_id=requirement.id,

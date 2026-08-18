@@ -51,7 +51,13 @@ def has_system_overdue(stages: list[RequirementStage], now: datetime) -> bool:
 
 # ---------------------------------------------------------------- 状态重算
 
-def recalc_status(requirement: Requirement, stages: list[RequirementStage], now: datetime) -> str:
+def recalc_status(
+    requirement: Requirement,
+    stages: list[RequirementStage],
+    now: datetime,
+    *,
+    force_auto: bool = False,
+) -> str:
     """按 3.3 口径重算需求状态并写回 requirement.status，返回新状态。
 
     - manual_status 覆盖位非空时直接返回它，冻结状态（design.md 3.3 手动状态）；
@@ -60,12 +66,17 @@ def recalc_status(requirement: Requirement, stages: list[RequirementStage], now:
     - delayed = 系统逾期 or 人工标记；
     - 任一环节进行中（或已有实际开始）→ in_progress；否则 not_started。
     """
-    if requirement.manual_status is not None:
+    if requirement.manual_status is not None and not force_auto:
         requirement.status = requirement.manual_status
         return requirement.status
-    if requirement.status == "done":
+    if requirement.status == "done" and not force_auto:
         return requirement.status
-    if requirement.status == "paused":
+    # 真正的暂停以 paused_at 为准。manual_status="paused" 只是展示覆盖，
+    # 清除覆盖后不能继续把需求错误地冻结在 paused。
+    if requirement.paused_at is not None:
+        requirement.status = "paused"
+        return requirement.status
+    if requirement.status == "paused" and not force_auto:
         return requirement.status
 
     if has_system_overdue(stages, now) or requirement.manual_delayed:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -32,7 +32,7 @@ class UserOut(BaseModel):
     display_name: str
     role: str
     is_active: bool
-    created_at: datetime
+    created_at: DateOnlyDateTime
 
 
 class UserCreate(BaseModel):
@@ -73,22 +73,42 @@ def _to_naive_sh(v) -> datetime | None:
     """
     if isinstance(v, str):
         v = datetime.fromisoformat(v)
+    if isinstance(v, date) and not isinstance(v, datetime):
+        return datetime.combine(v, time.min)
     if isinstance(v, datetime) and v.tzinfo is not None:
         return v.astimezone(TZ).replace(tzinfo=None)
     return v
 
 
-def _to_tz_sh(v: datetime | None) -> datetime | None:
-    """出参补 +08:00 偏移（design.md 8.8：ISO 8601 带时区偏移）。"""
-    if isinstance(v, datetime) and v.tzinfo is None:
-        return v.replace(tzinfo=TZ)
-    return v
+def _to_day_start(v) -> datetime | None:
+    value = _to_naive_sh(v)
+    return value.replace(hour=0, minute=0, second=0, microsecond=0) if value else value
 
 
-TZDateTime = Annotated[
+def _to_day_end(v) -> datetime | None:
+    value = _to_naive_sh(v)
+    return value.replace(hour=23, minute=59, second=59, microsecond=0) if value else value
+
+
+def _as_date(v: datetime | None) -> str | None:
+    return v.date().isoformat() if isinstance(v, datetime) else v
+
+
+# 对外统一按“年月日”传输；内部保留 datetime 以保证状态机边界计算准确。
+DateOnlyDateTime = Annotated[
     datetime,
     BeforeValidator(_to_naive_sh),
-    PlainSerializer(_to_tz_sh, when_used="always"),
+    PlainSerializer(_as_date, when_used="json"),
+]
+DateStartDateTime = Annotated[
+    datetime,
+    BeforeValidator(_to_day_start),
+    PlainSerializer(_as_date, when_used="json"),
+]
+DateEndDateTime = Annotated[
+    datetime,
+    BeforeValidator(_to_day_end),
+    PlainSerializer(_as_date, when_used="json"),
 ]
 
 
@@ -128,8 +148,8 @@ class StagePlanItem(BaseModel):
     """创建/编辑需求时的环节排期项。"""
 
     stage_type: str = Field(pattern=r"^(research|review|backend_dev|frontend_dev|api_dev|testing|release)$")
-    planned_start: TZDateTime | None = None
-    planned_end: TZDateTime | None = None
+    planned_start: DateStartDateTime | None = None
+    planned_end: DateEndDateTime | None = None
     assignee_id: int | None = None
 
 
@@ -146,15 +166,23 @@ class RequirementCreate(ProductLineMixin):
 
     title: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    remark: str | None = Field(default=None, max_length=4000)
     priority: str = Field(default="P2", pattern=PRIORITY_PATTERN)
     project_id: int | None = None
     responsible_pm_id: int | None = None  # 默认当前用户；仅 Admin 可指定他人
     stages: list[StagePlanItem] = Field(default_factory=list)
 
 
+class RequirementImportIn(BaseModel):
+    """批量导入需求；每个 items 元素与单条创建请求使用同一字段规范。"""
+
+    items: list[RequirementCreate] = Field(min_length=1, max_length=100)
+
+
 class RequirementUpdate(ProductLineMixin):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
+    remark: str | None = Field(default=None, max_length=4000)
     priority: str | None = Field(default=None, pattern=PRIORITY_PATTERN)
     project_id: int | None = None
     responsible_pm_id: int | None = None
@@ -168,7 +196,8 @@ class RequirementStatusUpdate(BaseModel):
     status 为 None → 清除覆盖位，回到状态机自动重算。
     """
 
-    status: RequirementStatus | None = None
+    # 必须显式传入 status；{"status": null} 表示清除，{} 不是清除指令。
+    status: RequirementStatus | None = Field(...)
 
 
 class ReasonIn(BaseModel):
@@ -185,10 +214,10 @@ class StageOut(BaseModel):
     seq: int
     status: str
     assignee_id: int | None
-    planned_start: TZDateTime | None
-    planned_end: TZDateTime | None
-    actual_start: TZDateTime | None
-    actual_end: TZDateTime | None
+    planned_start: DateOnlyDateTime | None
+    planned_end: DateOnlyDateTime | None
+    actual_start: DateOnlyDateTime | None
+    actual_end: DateOnlyDateTime | None
     last_delay_reason: str | None
     reminder_sent: bool
 
@@ -199,12 +228,12 @@ class ChangeLogOut(BaseModel):
     id: int
     stage_id: int
     field: str
-    old_value: TZDateTime | None  # 首次排期时原值为 None
-    new_value: TZDateTime | None
+    old_value: DateOnlyDateTime | None  # 首次排期时原值为 None
+    new_value: DateOnlyDateTime | None
     reason: str
     auto_generated: bool
     changed_by: int
-    created_at: TZDateTime
+    created_at: DateOnlyDateTime
 
 
 class RevertLogOut(BaseModel):
@@ -216,7 +245,7 @@ class RevertLogOut(BaseModel):
     to_stage_id: int
     reverted_by: int
     reason: str
-    created_at: TZDateTime
+    created_at: DateOnlyDateTime
 
 
 class RequirementOut(BaseModel):
@@ -225,6 +254,7 @@ class RequirementOut(BaseModel):
     id: int
     title: str
     description: str | None
+    remark: str | None
     product_line: str | None
     category: str | None
     source: str | None
@@ -237,16 +267,30 @@ class RequirementOut(BaseModel):
     pm_name: str | None = None  # 负责 PM 显示名（API 层填充）
     project_id: int | None
     current_stage: str | None = None  # 派生展示字段（含并行窗口标注）
-    planned_release: TZDateTime | None = None  # 预计上线时间（release 环节 planned_end）
-    actual_release: TZDateTime | None = None  # 实际上线时间（release 环节 actual_end）
-    created_at: TZDateTime
-    updated_at: TZDateTime
+    planned_release: DateOnlyDateTime | None = None  # 预计上线日期（release 环节 planned_end）
+    actual_release: DateOnlyDateTime | None = None  # 实际上线日期（release 环节 actual_end）
+    created_at: DateOnlyDateTime
+    updated_at: DateOnlyDateTime
 
 
 class RequirementDetailOut(RequirementOut):
     stages: list[StageOut]
     change_logs: list[ChangeLogOut]
     revert_logs: list[RevertLogOut]
+    modification_logs: list[RequirementModificationLogOut]
+
+
+class RequirementModificationLogOut(BaseModel):
+    """详情页统一的需求修改记录项，按时间倒序返回。"""
+
+    id: str
+    change_type: str
+    field: str
+    old_value: str | None
+    new_value: str | None
+    reason: str | None = None
+    changed_by: int | None = None
+    created_at: DateOnlyDateTime
 
 
 class RequirementListOut(BaseModel):
@@ -256,13 +300,20 @@ class RequirementListOut(BaseModel):
     page_size: int
 
 
+class RequirementImportOut(BaseModel):
+    """批量导入结果。接口仅在全部条目校验成功时才提交。"""
+
+    imported_count: int
+    items: list[RequirementOut]
+
+
 # ---------------------------------------------------------------- 环节
 
 class StagePlanUpdate(BaseModel):
     """修改预估时间（design.md 8.3）。"""
 
-    planned_start: TZDateTime | None = None
-    planned_end: TZDateTime | None = None
+    planned_start: DateStartDateTime | None = None
+    planned_end: DateEndDateTime | None = None
     reason: str = Field(min_length=1, max_length=2000)
 
 
@@ -276,8 +327,6 @@ class StageAssigneeUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------- 项目
-
-from datetime import date  # noqa: E402
 
 PROJECT_STATUS_PATTERN = (
     r"^(not_started|in_progress|done|paused|terminated)$"
@@ -298,8 +347,8 @@ class ProjectCreate(BaseModel):
     description: str | None = None
     contacts: list[ContactIn] = Field(default_factory=list)
     status: str = Field(default="not_started", pattern=PROJECT_STATUS_PATTERN)
-    planned_start: date | None = None
-    planned_end: date | None = None
+    planned_start: DateStartDateTime | None = None
+    planned_end: DateEndDateTime | None = None
     owner_id: int | None = None  # 默认当前用户；仅 Admin 可指定他人
 
 
@@ -310,10 +359,10 @@ class ProjectUpdate(BaseModel):
     progress_note: str | None = None
     progress_percent: int | None = Field(default=None, ge=0, le=100)
     status: str | None = Field(default=None, pattern=PROJECT_STATUS_PATTERN)
-    planned_start: date | None = None
-    planned_end: date | None = None
-    actual_start: date | None = None
-    actual_end: date | None = None
+    planned_start: DateStartDateTime | None = None
+    planned_end: DateEndDateTime | None = None
+    actual_start: DateStartDateTime | None = None
+    actual_end: DateEndDateTime | None = None
     owner_id: int | None = None
 
 
@@ -327,13 +376,13 @@ class ProjectOut(BaseModel):
     progress_note: str | None
     progress_percent: int
     status: str
-    planned_start: date | None
-    planned_end: date | None
-    actual_start: date | None
-    actual_end: date | None
+    planned_start: DateOnlyDateTime | None
+    planned_end: DateOnlyDateTime | None
+    actual_start: DateOnlyDateTime | None
+    actual_end: DateOnlyDateTime | None
     owner_id: int
-    created_at: TZDateTime
-    updated_at: TZDateTime
+    created_at: DateOnlyDateTime
+    updated_at: DateOnlyDateTime
 
 
 class ProjectRequirementItem(BaseModel):

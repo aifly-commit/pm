@@ -44,7 +44,7 @@ class TestValidateStageTimes:
         assert "需求调研" in errors[0]
 
     async def test_start_before_prereq_end(self, stages):
-        # 跨月粒度：review 开始月份早于 research 结束月份 → 冲突
+        # 日期粒度：review 开始日期早于 research 结束日期 → 冲突
         set_plan(
             stages,
             research=(datetime(2026, 8, 3), datetime(2026, 9, 10)),
@@ -55,25 +55,25 @@ class TestValidateStageTimes:
         errors = validate_stage_times(stages)
         assert any("需求审评" in e for e in errors)
 
-    async def test_same_month_adjacent_passes(self, stages):
-        # 同月相邻视为合理（月份级排期）：review 开始日与 research 结束同月
+    async def test_same_day_adjacent_passes(self, stages):
+        # 同日衔接允许。
         set_plan(
             stages,
             research=(datetime(2026, 8, 3), datetime(2026, 8, 25)),
-            review=(datetime(2026, 8, 10), datetime(2026, 9, 5)),
+            review=(datetime(2026, 8, 25), datetime(2026, 9, 5)),
         )
         from app.services.time_rules import validate_stage_times
 
         assert validate_stage_times(stages) == []
 
     async def test_testing_needs_all_three_dev_end(self, stages):
-        # testing 依赖三个开发环节中最晚的 planned_end（跨月比较）
+        # testing 依赖三个开发环节中最晚的 planned_end（按日期比较）
         set_plan(
             stages,
             backend_dev=(d(0), datetime(2026, 9, 10)),
             frontend_dev=(datetime(2026, 9, 10), datetime(2026, 9, 12)),
             api_dev=(datetime(2026, 9, 10), datetime(2026, 9, 14)),
-            testing=(datetime(2026, 8, 26), datetime(2026, 10, 20)),  # 开始月份早于 api_dev 的 9 月
+            testing=(datetime(2026, 8, 26), datetime(2026, 10, 20)),  # 开始日期早于 api_dev 结束日期
         )
         from app.services.time_rules import validate_stage_times
 

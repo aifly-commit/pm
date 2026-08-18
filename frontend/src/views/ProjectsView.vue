@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, getStoredUser } from '../api'
-import { PROJECT_STATUSES, REQ_STATUSES, statusMeta, fmtDate } from '../format'
+import { PROJECT_STATUSES, REQ_STATUSES, statusMeta, fmtTime } from '../format'
 
 const props = defineProps({ id: { type: String, default: '' } })
 const loading = ref(false)
@@ -25,6 +25,12 @@ const createForm = reactive({
 const attachVisible = ref(false)
 const attachId = ref(null)
 const allRequirements = ref([])
+
+function toApiDate(value, isEnd = false) {
+  if (!value) return null
+  const day = String(value).slice(0, 10)
+  return `${day}T${isEnd ? '23:59:59' : '00:00:00'}+08:00`
+}
 
 async function loadList() {
   loading.value = true
@@ -65,8 +71,8 @@ async function submitCreate() {
     const created = await api.post('/projects', {
       name: createForm.name,
       description: createForm.description || null,
-      planned_start: createForm.planned_start || null,
-      planned_end: createForm.planned_end || null,
+      planned_start: toApiDate(createForm.planned_start),
+      planned_end: toApiDate(createForm.planned_end, true),
       contacts: createForm.contacts.filter((c) => c.name.trim()).map((c) => ({ name: c.name, phone: c.phone || null })),
     })
     ElMessage.success('项目已创建')
@@ -139,7 +145,7 @@ onMounted(reload)
   <!-- 列表 -->
   <div v-if="!props.id && !detail" class="page">
     <div class="page-header">
-      <div>
+      <div class="page-heading">
         <h2 class="page-title">项目管理</h2>
         <p class="page-sub">接口人 · 对接需求清单 · 进展与周/月复盘</p>
       </div>
@@ -169,8 +175,8 @@ onMounted(reload)
             <el-progress :percentage="row.progress_percent" :stroke-width="10" />
           </template>
         </el-table-column>
-        <el-table-column label="计划周期" width="220">
-          <template #default="{ row }">{{ fmtDate(row.planned_start) }} ~ {{ fmtDate(row.planned_end) }}</template>
+        <el-table-column label="计划周期" width="240">
+          <template #default="{ row }">{{ fmtTime(row.planned_start) }} ~ {{ fmtTime(row.planned_end) }}</template>
         </el-table-column>
         <el-table-column prop="owner_id" label="负责人" width="90" />
       </el-table>
@@ -216,7 +222,7 @@ onMounted(reload)
             </div>
             <div class="head-meta">
               <span>负责人 #{{ detail.owner_id }}</span>
-              <span>计划周期 {{ fmtDate(detail.planned_start) }} ~ {{ fmtDate(detail.planned_end) }}</span>
+              <span>计划周期 {{ fmtTime(detail.planned_start) }} ~ {{ fmtTime(detail.planned_end) }}</span>
               <span>自动完成率 {{ (detail.completion_rate * 100).toFixed(1) }}%（{{ detail.done_count }}/{{ detail.total }}）</span>
             </div>
             <div class="head-meta">

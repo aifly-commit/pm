@@ -113,10 +113,26 @@ class TestOverdueScan:
 
         req, stages = await seed_requirement(db, pm_user.id)
         get_stage(stages, StageType.RESEARCH).planned_end = NOW_SH - timedelta(days=1)
-        req.status = "paused"  # 暂停冻结判定（design.md 3.3）
+        req.status = "paused"
+        req.paused_at = NOW_SH  # 真实暂停时钟才冻结扫描
         await db.flush()
         report = await run_scan(db, NOW_SH)
         assert report.overdue_notifications == 0
+
+    async def test_manual_paused_status_does_not_suppress_scan(self, db, pm_user):
+        """manual paused 是展示覆盖；没有 paused_at 时仍需按环节提醒。"""
+        from app.enums import StageType
+
+        req, stages = await seed_requirement(db, pm_user.id)
+        get_stage(stages, StageType.RESEARCH).planned_end = NOW_SH - timedelta(days=1)
+        req.status = "paused"
+        req.manual_status = "paused"
+        await db.flush()
+
+        report = await run_scan(db, NOW_SH)
+
+        assert report.overdue_notifications == 1
+        assert req.status == "paused"  # 重算仍尊重手动覆盖
 
     async def test_null_planned_end_excluded(self, db, pm_user):
         req, stages = await seed_requirement(db, pm_user.id)

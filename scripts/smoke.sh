@@ -42,13 +42,13 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/auth/login" -H 'C
 
 echo "== 3. 需求闭环（创建 → 走完 7 环节 → done）=="
 RID=$(curl -sf -X POST "${BASE}/requirements" -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
-  -d '{"title":"冒烟需求","priority":"P1","product_line":"MySQL","category":"基本能力","source":"冒烟","stages":[{"stage_type":"release","planned_end":"2030-02-01T23:59:59+08:00"}]}' | .venv/bin/python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+  -d '{"title":"冒烟需求","priority":"P1","product_line":"MySQL","category":"基本能力","source":"冒烟","stages":[{"stage_type":"release","planned_end":"2030-02-01"}]}' | .venv/bin/python -c "import sys,json;print(json.load(sys.stdin)['id'])")
 echo "  创建需求 id=${RID} ✓"
 # 无排期创建后首次排期（回归路径：old_value NULL 不得 500）
 SID=$(curl -sf "${BASE}/requirements/${RID}" -H "Authorization: Bearer ${TOKEN}" \
   | .venv/bin/python -c "import sys,json;d=json.load(sys.stdin);print(d['stages'][0]['id'])")
 curl -sf -X PATCH "${BASE}/stages/${SID}/plan" -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
-  -d '{"planned_start":"2030-01-01T09:00:00+08:00","planned_end":"2030-01-03T18:00:00+08:00","reason":"首次排期"}' >/dev/null
+  -d '{"planned_start":"2030-01-01","planned_end":"2030-01-03","reason":"首次排期"}' >/dev/null
 echo "  首次排期（old_value NULL 回归路径）✓"
 # 依次走完 7 环节
 for i in 0 1 2 3 4 5 6; do
@@ -64,7 +64,7 @@ STATUS=$(curl -sf "${BASE}/requirements/${RID}" -H "Authorization: Bearer ${TOKE
 echo "== 4. 改期必填原因（缺原因必须 422）=="
 code=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH "${BASE}/stages/${SID}/plan" \
   -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' \
-  -d '{"planned_end":"2030-01-05T18:00:00+08:00"}')
+  -d '{"planned_end":"2030-01-05"}')
 [ "${code}" = "422" ] && echo "  缺 reason 422 ✓"
 
 echo "== 5. 统计 & 通知 =="

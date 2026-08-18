@@ -44,7 +44,7 @@ async def list_notifications(
                 "requirement_id": n.requirement_id,
                 "stage_id": n.stage_id,
                 "is_read": n.is_read,
-                "created_at": n.created_at.isoformat() + "+08:00",
+                "created_at": n.created_at.date().isoformat(),
             }
             for n in items
         ],

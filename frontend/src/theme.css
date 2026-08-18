@@ -2,14 +2,14 @@
 
 :root {
   /* 品牌色板 */
-  --pm-primary: #4c6fff;
-  --pm-primary-deep: #3b57d9;
-  --pm-bg: #f2f4f9;
-  --pm-card-border: #e8ecf4;
-  --pm-text-main: #1f2733;
-  --pm-text-sub: #7a8699;
-  --pm-radius: 10px;
-  --pm-shadow: 0 1px 2px rgba(31, 41, 66, 0.04), 0 4px 16px rgba(31, 41, 66, 0.06);
+  --pm-primary: #536ff6;
+  --pm-primary-deep: #4058d5;
+  --pm-bg: #f4f6fb;
+  --pm-card-border: #e4e9f4;
+  --pm-text-main: #202b45;
+  --pm-text-sub: #73809a;
+  --pm-radius: 14px;
+  --pm-shadow: 0 2px 4px rgba(33, 45, 83, 0.025), 0 12px 30px rgba(44, 59, 105, 0.07);
 
   /* Element Plus 变量覆盖 */
   --el-color-primary: var(--pm-primary);
@@ -25,6 +25,7 @@ body {
   color: var(--pm-text-main);
   font-family: var(--el-font-family);
   -webkit-font-smoothing: antialiased;
+  min-width: 320px;
 }
 
 /* ---------- 通用页面结构 ---------- */
@@ -49,22 +50,32 @@ body {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
   gap: 16px;
   flex-wrap: wrap;
 }
 
 .page-title {
-  font-size: 20px;
+  font-size: 25px;
   font-weight: 700;
   letter-spacing: 0.5px;
   margin: 0;
 }
 
+.page-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 13px;
+  min-width: 0;
+}
+
 .page-sub {
-  margin: 4px 0 0;
+  margin: 0;
+  padding-left: 13px;
+  border-left: 1px solid #d7dfed;
   font-size: 13px;
   color: var(--pm-text-sub);
+  white-space: nowrap;
 }
 
 /* ---------- 卡片 ---------- */
@@ -72,12 +83,21 @@ body {
   border: 1px solid var(--pm-card-border);
   border-radius: var(--pm-radius);
   box-shadow: var(--pm-shadow);
+  overflow: hidden;
 }
 
 .el-card__header {
   border-bottom: 1px solid var(--pm-card-border);
   padding: 14px 20px;
   font-size: 14px;
+}
+
+.el-button--primary {
+  box-shadow: 0 7px 14px rgba(83, 111, 246, 0.2);
+}
+
+.el-button--primary.is-plain {
+  box-shadow: none;
 }
 
 .card-title {
@@ -105,7 +125,10 @@ body {
 
 .el-table th.el-table__cell {
   font-weight: 600;
+  height: 48px;
 }
+
+.el-table .el-table__cell { padding: 12px 0; }
 
 /* ---------- 工具条 ---------- */
 .toolbar {
@@ -113,6 +136,14 @@ body {
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.el-input__wrapper, .el-select__wrapper {
+  box-shadow: 0 0 0 1px #e1e6f0 inset !important;
+}
+
+.el-input__wrapper:hover, .el-select__wrapper:hover {
+  box-shadow: 0 0 0 1px #b7c4ec inset !important;
 }
 
 /* ---------- 链接 ---------- */
@@ -128,4 +159,12 @@ a:hover {
 /* ---------- 描述列表 ---------- */
 .el-descriptions__label {
   color: var(--pm-text-sub) !important;
+}
+
+@media (max-width: 760px) {
+  .page-title { font-size: 22px; }
+  .page-header { align-items: flex-start; }
+  .page-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .page-sub { padding-left: 0; border-left: 0; white-space: normal; }
+  .page-header > .el-button { width: 100%; }
 }
