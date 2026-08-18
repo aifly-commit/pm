@@ -34,6 +34,7 @@ const createForm = reactive({
   planned_release: '', // 预计上线时间（必填），映射为 release 环节 planned_end
   priority: 'P2',
   description: '',
+  remark: '',
   stages: STAGE_TYPES.map((s) => ({
     stage_type: s.value,
     label: s.label,
@@ -153,6 +154,7 @@ async function submitCreate() {
       source: createForm.source || null,
       priority: createForm.priority,
       description: createForm.description || null,
+      remark: createForm.remark || null,
       stages,
     })
     ElMessage.success('需求已创建')
@@ -163,6 +165,7 @@ async function submitCreate() {
     createForm.source = ''
     createForm.planned_release = ''
     createForm.description = ''
+    createForm.remark = ''
     createForm.priority = 'P2'
     createForm.stages.forEach((s) => {
       s.planned_start = ''
@@ -312,6 +315,18 @@ onMounted(() => {
           <el-col :span="24">
             <el-form-item label="描述">
               <el-input v-model="createForm.description" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="备注">
+              <el-input
+                v-model="createForm.remark"
+                type="textarea"
+                :rows="2"
+                maxlength="4000"
+                show-word-limit
+                placeholder="填写补充说明、风险或协作备注"
+              />
             </el-form-item>
           </el-col>
         </el-row>
